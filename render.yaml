@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: karate-business
+    env: node
+    branch: main
+    buildCommand: npm install
+    startCommand: node server.js
+    autoDeploy: true
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
