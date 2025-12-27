@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Login Test</title>
+</head>
+<body>
+    <h1>Login Test</h1>
+    <button onclick="testLogin()">Test Admin Login</button>
+    <button onclick="checkSession()">Check Session</button>
+    <button onclick="testShowSection()">Test Show Admin Dashboard</button>
+    
+    <script>
+        async function testLogin() {
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        email: 'karatesubhash455@gmail.com', 
+                        password: 'karate@123', 
+                        role: 'admin' 
+                    })
+                });
+                
+                const data = await response.json();
+                console.log('Login response:', data);
+                
+                if (data.success) {
+                    sessionStorage.setItem('currentUser', JSON.stringify(data.user));
+                    console.log('User stored in sessionStorage');
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+            }
+        }
+        
+        function checkSession() {
+            const user = sessionStorage.getItem('currentUser');
+            console.log('SessionStorage user:', user);
+        }
+        
+        function testShowSection() {
+            console.log('Testing showSection...');
+            // This would be the showSection function from the main app
+            alert('Open the main app and check console logs');
+        }
+    </script>
+</body>
+</html>
