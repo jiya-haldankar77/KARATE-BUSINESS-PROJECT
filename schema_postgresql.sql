@@ -1,5 +1,15 @@
 -- PostgreSQL Schema for kartae database used by WTSKF-GOA admin panel
 
+-- Users
+CREATE TABLE IF NOT EXISTS users (
+  id SERIAL PRIMARY KEY,
+  username VARCHAR(255) UNIQUE NOT NULL,
+  email VARCHAR(255) UNIQUE NOT NULL,
+  password VARCHAR(255) NOT NULL,
+  role VARCHAR(50) DEFAULT 'user',
+  createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Instructors
 CREATE TABLE IF NOT EXISTS instructors (
   id SERIAL PRIMARY KEY,
@@ -10,13 +20,26 @@ CREATE TABLE IF NOT EXISTS instructors (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Batches (simple version: just name/description)
+-- Batches
 CREATE TABLE IF NOT EXISTS batches (
   id SERIAL PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
   description TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  timing VARCHAR(255),
+  centre VARCHAR(255),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_batch_name ON batches(name);
+-- Seed default batches
+INSERT INTO batches (name, description, timing, centre)
+VALUES
+  ('Batch 1', 'Tue, Thu, Sat batch', 'Tue, Thu, Sat (4:30 PM - 6:00 PM)', 'ST.CRUZ'),
+  ('Batch 2', 'Tue, Thu, Sat batch', 'Tue, Thu, Sat (6:00 PM - 8:00 PM)', 'ST.CRUZ'),
+  ('Batch 3', 'Mon, Wed, Fri batch', 'Mon, Wed, Fri (4:30 PM - 6:00 PM)', 'ST.CRUZ'),
+  ('Batch 4', 'Mon, Wed, Fri batch', 'Mon, Wed, Fri (6:00 PM - 8:00 PM)', 'ST.CRUZ'),
+  ('Batch A1', 'Mon, Wed, Fri batch', 'Mon, Wed, Fri (6:00 PM - 8:00 PM)', 'GUIRIM')
+ON CONFLICT (name) DO NOTHING;
 
 -- Admissions (from admission form)
 CREATE TABLE IF NOT EXISTS admissions (
@@ -25,14 +48,44 @@ CREATE TABLE IF NOT EXISTS admissions (
   last_name VARCHAR(100) NOT NULL,
   email VARCHAR(255) NOT NULL,
   phone VARCHAR(50) NOT NULL,
-  age INTEGER NOT NULL,
-  belt_level VARCHAR(50) NOT NULL,
+  age INTEGER,
+  belt_level VARCHAR(50),
   address VARCHAR(500),
-  centre VARCHAR(50) NOT NULL,
-  batch_timing VARCHAR(50) NOT NULL,
+  centre VARCHAR(255),
+  batch_timing VARCHAR(255),
   photo_url VARCHAR(500),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  email_verified BOOLEAN DEFAULT FALSE,
+  verification_token VARCHAR(255),
+  verification_sent_at TIMESTAMP NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_admissions_email ON admissions(email);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_admissions_phone ON admissions(phone);
+
+-- Fees Payments (for payment screenshot submissions)
+CREATE TABLE IF NOT EXISTS fees_payments (
+  id SERIAL PRIMARY KEY,
+  full_name VARCHAR(255) NOT NULL,
+  phone VARCHAR(20) NOT NULL,
+  batch_name VARCHAR(100) NOT NULL,
+  centre VARCHAR(100) NOT NULL,
+  payment_datetime TIMESTAMP NOT NULL,
+  status VARCHAR(50) NOT NULL,
+  txn_id VARCHAR(64),
+  amount DECIMAL(10,2),
+  img_hash VARCHAR(64),
+  screenshot_base64 TEXT,
+  validation_json JSON,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_txn_id ON fees_payments(txn_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_img_hash ON fees_payments(img_hash);
+CREATE INDEX IF NOT EXISTS idx_fees_phone ON fees_payments(phone);
+CREATE INDEX IF NOT EXISTS idx_fees_batch ON fees_payments(batch_name);
+CREATE INDEX IF NOT EXISTS idx_fees_centre ON fees_payments(centre);
+CREATE INDEX IF NOT EXISTS idx_fees_status ON fees_payments(status);
 
 -- Payments
 CREATE TABLE IF NOT EXISTS payments (
@@ -134,7 +187,7 @@ CREATE TABLE IF NOT EXISTS student_registrations (
   last_name VARCHAR(100) NOT NULL,
   email VARCHAR(255) NOT NULL UNIQUE,
   phone VARCHAR(50) NOT NULL,
-  batch VARCHAR(20) NOT NULL CHECK (batch IN ('batch1', 'batch2', 'batch3')),
+  batch VARCHAR(20) NOT NULL CHECK (batch IN ('batch1', 'batch2', 'batch3', 'batch4', 'batchA1')),
   email_verified BOOLEAN DEFAULT FALSE,
   verification_token VARCHAR(255),
   verification_sent_at TIMESTAMP NULL,

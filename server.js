@@ -248,7 +248,7 @@ if (process.env.DATABASE_URL) {
     const { Pool } = require('pg');
     const cloudPool = new Pool({
       connectionString: process.env.DATABASE_URL,
-      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+      ssl: { rejectUnauthorized: false }
     });
     module.exports.pool = cloudPool;
     module.exports.dbType = 'postgresql';
@@ -274,6 +274,10 @@ if (process.env.DATABASE_URL) {
 
 // Initialize database tables
 async function initializeDatabase() {
+  if (module.exports.dbType === 'postgresql') {
+    // PostgreSQL uses external schema setup (see setup-database.js); skip MySQL initialization
+    return;
+  }
   const connection = await module.exports.pool.getConnection();
   try {
     // Create users table
@@ -481,17 +485,59 @@ async function initializeDatabase() {
 // Initialize the database
 initializeDatabase().catch(console.error);
 
-// Query function for MySQL
+// Query function supporting MySQL and PostgreSQL
 async function query(sql, params) {
-  const connection = await module.exports.pool.getConnection();
-  try {
-    const [rows] = await connection.query(sql, params);
-    return rows;
-  } catch (err) {
-    console.error('Database error:', err);
-    throw err;
-  } finally {
-    connection.release();
+  if (module.exports.dbType === 'postgresql') {
+    const client = await module.exports.pool.connect();
+    try {
+      let text = sql;
+      // Normalize MySQL-specific syntax for PostgreSQL
+      text = text.replace(/`/g, '"');
+      text = text.replace(/\bCURDATE\(\)/gi, 'CURRENT_DATE');
+      text = text.replace(/\bDATE_SUB\s*\(\s*NOW\(\)\s*,\s*INTERVAL\s+7\s+DAY\s*\)/gi, "NOW() - INTERVAL '7 days'");
+
+      // Convert positional params: ? -> $1, $2, ...
+      if (Array.isArray(params) && params.length) {
+        let i = 0;
+        text = text.replace(/\?/g, () => `$${++i}`);
+      }
+
+      const lowered = text.trim().toLowerCase();
+      if (lowered.startsWith('insert')) {
+        // Ensure we get the inserted id back similar to MySQL's insertId
+        if (!/returning\s+/i.test(text)) {
+          text = text.replace(/;+\s*$/,'');
+          text += ' RETURNING id';
+        }
+        const res = await client.query(text, params || []);
+        const id = res.rows && res.rows[0] ? res.rows[0].id : undefined;
+        return { insertId: id, affectedRows: res.rowCount || 0 };
+      }
+
+      if (lowered.startsWith('update') || lowered.startsWith('delete')) {
+        const res = await client.query(text, params || []);
+        return { affectedRows: res.rowCount || 0 };
+      }
+
+      const res = await client.query(text, params || []);
+      return res.rows || [];
+    } catch (err) {
+      console.error('Database error:', err);
+      throw err;
+    } finally {
+      client.release();
+    }
+  } else {
+    const connection = await module.exports.pool.getConnection();
+    try {
+      const [rows] = await connection.query(sql, params);
+      return rows;
+    } catch (err) {
+      console.error('Database error:', err);
+      throw err;
+    } finally {
+      connection.release();
+    }
   }
 }
 
