@@ -15,6 +15,7 @@ let ExcelJS;
 try { ExcelJS = require('exceljs'); } catch (e) { ExcelJS = null; }
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
@@ -225,6 +226,16 @@ const transporter = nodemailer.createTransport({
   }
 });
 
+try {
+  transporter.verify().then(() => {
+    console.log('SMTP ready: true');
+  }).catch(err => {
+    console.error('SMTP verify error:', err);
+  });
+} catch (e) {
+  console.error('SMTP verify setup error:', e);
+}
+
 // Create MySQL connection pool
 const pool = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
@@ -289,7 +300,12 @@ if (process.env.DATABASE_URL) {
 // Initialize database tables
 async function initializeDatabase() {
   if (module.exports.dbType === 'postgresql') {
-    // PostgreSQL uses external schema setup (see setup-database.js); skip MySQL initialization
+    try {
+      const client = await module.exports.pool.connect();
+      try { await client.query('ALTER TABLE IF EXISTS instructors ALTER COLUMN photo_url TYPE TEXT'); } catch (_) {}
+      try { await client.query('ALTER TABLE IF EXISTS admissions ALTER COLUMN photo_url TYPE TEXT'); } catch (_) {}
+      client.release();
+    } catch (_) {}
     return;
   }
   const connection = await module.exports.pool.getConnection();
