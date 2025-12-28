@@ -11,12 +11,19 @@ const redis = require('redis');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const fs = require('fs');
+const { OAuth2Client } = require('google-auth-library');
 let ExcelJS;
 try { ExcelJS = require('exceljs'); } catch (e) { ExcelJS = null; }
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+
+// Google OAuth Client
+const googleClient = new OAuth2Client(
+  process.env.GOOGLE_CLIENT_ID || 'your-google-client-id',
+  process.env.GOOGLE_CLIENT_SECRET || 'your-google-client-secret'
+);
 
 // Core middleware must be registered before routes
 app.use(cors());
@@ -1628,7 +1635,70 @@ app.post('/api/login', async (req, res) => {
   try {
     const { email, password, role } = req.body;
     const normEmail = String(email || '').trim().toLowerCase();
+    
+    // ... existing login logic ...
+    
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
 
+// Google OAuth Login
+app.post('/api/google-login', async (req, res) => {
+  try {
+    const { token, role } = req.body;
+    
+    // Verify Google token
+    const ticket = await googleClient.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID || 'your-google-client-id'
+    });
+    
+    const payload = ticket.getPayload();
+    const { email, name, picture } = payload;
+    
+    // Check if user exists in database
+    let user = await query('SELECT * FROM users WHERE email = ?', [email]);
+    
+    if (!user.length) {
+      // Create new user if doesn't exist
+      await query('INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, ?)', 
+        [name, email, 'google-oauth-user', role || 'user']);
+      user = await query('SELECT * FROM users WHERE email = ?', [email]);
+    }
+    
+    // Generate JWT token
+    const jwtToken = jwt.sign(
+      { userId: user[0].id, email: user[0].email, role: role || 'user' },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    
+    res.json({
+      success: true,
+      token: jwtToken,
+      user: {
+        id: user[0].id,
+        username: user[0].username,
+        email: user[0].email,
+        role: role || 'user',
+        picture: picture
+      }
+    });
+    
+  } catch (error) {
+    console.error('Google login error:', error);
+    res.status(500).json({ success: false, message: 'Google authentication failed' });
+  }
+});
+
+// -------- Authentication --------
+app.post('/api/login', async (req, res) => {
+  try {
+    const { email, password, role } = req.body;
+    const normEmail = String(email || '').trim().toLowerCase();
+    
     if (!normEmail || !password || !role) {
       return res.status(400).json({ message: 'Email, password, and role are required' });
     }

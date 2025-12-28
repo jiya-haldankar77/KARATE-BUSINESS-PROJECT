@@ -36,12 +36,10 @@ services:
         value: 600
       - key: CACHE_TTL_STUDENT
         value: 300
-
-  # PostgreSQL Database
-  - type: pserv
-    name: karate-db
-    env: postgres
-    plan: free
+      - key: GOOGLE_CLIENT_ID
+        value: your-google-client-id.apps.googleusercontent.com
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
 
   # Redis for Caching
   - type: redis
