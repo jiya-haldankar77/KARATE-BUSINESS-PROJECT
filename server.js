@@ -239,32 +239,38 @@ const pool = mysql.createPool({
 // Alternative: Parse DATABASE_URL for cloud deployment
 if (process.env.DATABASE_URL) {
   const mysql = require('mysql2/promise');
-  const { parse } = require('url');
-  const dbUrl = parse(process.env.DATABASE_URL);
-  
-  // Check if it's PostgreSQL
-  if (dbUrl && dbUrl.protocol.includes('postgres')) {
-    // Use pg for PostgreSQL
+  const rawUrl = process.env.DATABASE_URL;
+  let protocol = '';
+  try {
+    protocol = new URL(rawUrl).protocol || '';
+  } catch (_) {
+    protocol = '';
+  }
+
+  if (protocol.startsWith('postgres')) {
     const { Pool } = require('pg');
     const cloudPool = new Pool({
-      connectionString: process.env.DATABASE_URL,
+      connectionString: rawUrl,
       ssl: { rejectUnauthorized: false }
     });
     module.exports.pool = cloudPool;
     module.exports.dbType = 'postgresql';
-  } else {
-    // MySQL connection
+  } else if (protocol.startsWith('mysql')) {
+    const u = new URL(rawUrl);
     const cloudPool = mysql.createPool({
-      host: dbUrl.hostname,
-      user: dbUrl.auth.split(':')[0],
-      password: dbUrl.auth.split(':')[1],
-      database: dbUrl.pathname.substring(1),
-      port: dbUrl.port || 3306,
+      host: u.hostname,
+      user: decodeURIComponent(u.username || ''),
+      password: decodeURIComponent(u.password || ''),
+      database: u.pathname ? u.pathname.slice(1) : '',
+      port: u.port ? Number(u.port) : 3306,
       waitForConnections: true,
       connectionLimit: 20,
       queueLimit: 0
     });
     module.exports.pool = cloudPool;
+    module.exports.dbType = 'mysql';
+  } else {
+    module.exports.pool = pool;
     module.exports.dbType = 'mysql';
   }
 } else {
