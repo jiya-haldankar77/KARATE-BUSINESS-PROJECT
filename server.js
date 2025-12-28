@@ -243,7 +243,7 @@ if (process.env.DATABASE_URL) {
   const dbUrl = parse(process.env.DATABASE_URL);
   
   // Check if it's PostgreSQL
-  if (dbUrl.protocol.includes('postgres')) {
+  if (dbUrl && dbUrl.protocol.includes('postgres')) {
     // Use pg for PostgreSQL
     const { Pool } = require('pg');
     const cloudPool = new Pool({
