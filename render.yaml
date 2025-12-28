@@ -42,9 +42,6 @@ services:
     name: karate-db
     env: postgres
     plan: free
-    databases:
-      - name: kartae
-        databaseName: kartae
 
   # Redis for Caching
   - type: redis
