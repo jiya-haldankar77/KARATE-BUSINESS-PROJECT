@@ -38,13 +38,10 @@ services:
         value: 300
 
   # PostgreSQL Database
-  - type: pserv
+  - type: postgres
     name: karate-db
-    env: postgres
     plan: free
-    databases:
-      - name: kartae
-        databaseName: kartae
+    databaseName: kartae
 
   # Redis for Caching
   - type: redis
