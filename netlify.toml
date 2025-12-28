@@ -1,9 +1,0 @@
-[build]
-  command = ""
-  publish = "."
-
-# SPA fallback so deep links work
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200

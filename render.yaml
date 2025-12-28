@@ -1,12 +1,53 @@
 services:
+  # Web Service
   - type: web
-    name: karate-business
+    name: karate-admin-backend
     env: node
-    branch: main
+    plan: free
     buildCommand: npm install
-    startCommand: node server.js
-    autoDeploy: true
-    healthCheckPath: /api/health
+    startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
+      - key: PORT
+        value: 3000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: karate-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: EMAIL_USER
+        value: karatesubhash455@gmail.com
+      - key: EMAIL_PASS
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: karate-redis
+          property: connectionString
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 900000
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: 100
+      - key: AUTH_RATE_LIMIT_MAX_REQUESTS
+        value: 5
+      - key: CACHE_TTL_DASHBOARD
+        value: 600
+      - key: CACHE_TTL_STUDENT
+        value: 300
+
+  # PostgreSQL Database
+  - type: pserv
+    name: karate-db
+    env: postgres
+    plan: free
+    databases:
+      - name: kartae
+        databaseName: kartae
+
+  # Redis for Caching
+  - type: redis
+    name: karate-redis
+    plan: free
+    ipAllowList: []

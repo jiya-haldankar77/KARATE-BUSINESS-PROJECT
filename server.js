@@ -18,9 +18,6 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
-// Honor X-Forwarded-* headers behind Render/NGINX to build correct https links
-app.set('trust proxy', 1);
-
 // Core middleware must be registered before routes
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
@@ -236,14 +233,48 @@ const pool = mysql.createPool({
   database: process.env.DB_NAME || 'kartae',
   waitForConnections: true,
   connectionLimit: 20,
-  queueLimit: 0,
-  // Optional SSL for managed DBs (e.g., PlanetScale)
-  ssl: process.env.DB_SSL ? { rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' } : undefined
+  queueLimit: 0
 });
+
+// Alternative: Parse DATABASE_URL for cloud deployment
+if (process.env.DATABASE_URL) {
+  const mysql = require('mysql2/promise');
+  const { parse } = require('url');
+  const dbUrl = parse(process.env.DATABASE_URL);
+  
+  // Check if it's PostgreSQL
+  if (dbUrl.protocol.includes('postgres')) {
+    // Use pg for PostgreSQL
+    const { Pool } = require('pg');
+    const cloudPool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+    });
+    module.exports.pool = cloudPool;
+    module.exports.dbType = 'postgresql';
+  } else {
+    // MySQL connection
+    const cloudPool = mysql.createPool({
+      host: dbUrl.hostname,
+      user: dbUrl.auth.split(':')[0],
+      password: dbUrl.auth.split(':')[1],
+      database: dbUrl.pathname.substring(1),
+      port: dbUrl.port || 3306,
+      waitForConnections: true,
+      connectionLimit: 20,
+      queueLimit: 0
+    });
+    module.exports.pool = cloudPool;
+    module.exports.dbType = 'mysql';
+  }
+} else {
+  module.exports.pool = pool;
+  module.exports.dbType = 'mysql';
+}
 
 // Initialize database tables
 async function initializeDatabase() {
-  const connection = await pool.getConnection();
+  const connection = await module.exports.pool.getConnection();
   try {
     // Create users table
     await connection.query(`
@@ -452,7 +483,7 @@ initializeDatabase().catch(console.error);
 
 // Query function for MySQL
 async function query(sql, params) {
-  const connection = await pool.getConnection();
+  const connection = await module.exports.pool.getConnection();
   try {
     const [rows] = await connection.query(sql, params);
     return rows;
