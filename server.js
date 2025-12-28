@@ -239,12 +239,17 @@ const pool = mysql.createPool({
 // Alternative: Parse DATABASE_URL for cloud deployment
 if (process.env.DATABASE_URL) {
   const mysql = require('mysql2/promise');
-  const rawUrl = process.env.DATABASE_URL;
+  const rawUrl = (process.env.DATABASE_URL || '').trim();
   let protocol = '';
   try {
     protocol = new URL(rawUrl).protocol || '';
   } catch (_) {
     protocol = '';
+  }
+  const lowered = rawUrl.toLowerCase();
+  if (!protocol && lowered) {
+    if (lowered.includes('postgres://') || lowered.includes('postgresql://')) protocol = 'postgres:';
+    else if (lowered.includes('mysql://')) protocol = 'mysql:';
   }
 
   if (protocol.startsWith('postgres')) {
@@ -255,6 +260,7 @@ if (process.env.DATABASE_URL) {
     });
     module.exports.pool = cloudPool;
     module.exports.dbType = 'postgresql';
+    try { const u = new URL(rawUrl); console.log('DB selected:', 'postgresql', '@', u.hostname); } catch (_) { console.log('DB selected:', 'postgresql'); }
   } else if (protocol.startsWith('mysql')) {
     const u = new URL(rawUrl);
     const cloudPool = mysql.createPool({
@@ -269,9 +275,11 @@ if (process.env.DATABASE_URL) {
     });
     module.exports.pool = cloudPool;
     module.exports.dbType = 'mysql';
+    console.log('DB selected:', 'mysql', '@', u.hostname);
   } else {
     module.exports.pool = pool;
     module.exports.dbType = 'mysql';
+    console.log('DB selected:', 'mysql (default local)');
   }
 } else {
   module.exports.pool = pool;
