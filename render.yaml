@@ -11,10 +11,11 @@ services:
         value: production
       - key: PORT
         value: 3000
+
+      # DATABASE URL (set manually in Render dashboard)
       - key: DATABASE_URL
-        fromDatabase:
-          name: karate-db
-          property: connectionString
+        sync: false
+
       - key: JWT_SECRET
         generateValue: true
       - key: EMAIL_USER
