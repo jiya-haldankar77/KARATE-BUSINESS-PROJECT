@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS instructors (
   name VARCHAR(255) NOT NULL,
   description TEXT,
   rank VARCHAR(100),
-  photo_url VARCHAR(500),
+  photo_url TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS admissions (
   address VARCHAR(500),
   centre VARCHAR(255),
   batch_timing VARCHAR(255),
-  photo_url VARCHAR(500),
+  photo_url TEXT,
   email_verified BOOLEAN DEFAULT FALSE,
   verification_token VARCHAR(255),
   verification_sent_at TIMESTAMP NULL,

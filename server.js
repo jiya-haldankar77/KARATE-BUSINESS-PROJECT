@@ -927,8 +927,10 @@ app.post('/api/admissions', async (req, res) => {
     });
     
     let errorMessage = 'Error creating admission';
-    if (err.code === 'ER_DUP_ENTRY') {
+    if (err.code === 'ER_DUP_ENTRY' || err.code === '23505' || (err.message && /duplicate key value/i.test(err.message))) {
       errorMessage = 'This email or phone number is already registered.';
+    } else if (err.code === '22001' || (err.message && /value too long/i.test(err.message))) {
+      errorMessage = 'Photo or text too large. Please upload a smaller image or shorten the field.';
     } else if (err.sqlMessage) {
       errorMessage = `Database error: ${err.sqlMessage}`;
     }
