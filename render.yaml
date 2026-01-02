@@ -6,15 +6,16 @@ services:
     plan: free
     buildCommand: npm install
     startCommand: npm start
+    autoDeploy: true
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 3000
-
-      # DATABASE URL (set manually in Render dashboard)
+      # DATABASE_URL will be sourced from the Postgres database defined below
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: karate-postgres
+          property: connectionString
 
       - key: JWT_SECRET
         generateValue: true
@@ -43,3 +44,9 @@ services:
     name: karate-redis
     plan: free
     ipAllowList: []
+
+databases:
+  - name: karate-postgres
+    plan: free
+    databaseName: karate
+    user: karate

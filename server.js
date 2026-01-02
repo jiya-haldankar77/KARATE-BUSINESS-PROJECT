@@ -302,10 +302,21 @@ async function initializeDatabase() {
   if (module.exports.dbType === 'postgresql') {
     try {
       const client = await module.exports.pool.connect();
-      try { await client.query('ALTER TABLE IF EXISTS instructors ALTER COLUMN photo_url TYPE TEXT'); } catch (_) {}
-      try { await client.query('ALTER TABLE IF EXISTS admissions ALTER COLUMN photo_url TYPE TEXT'); } catch (_) {}
-      client.release();
-    } catch (_) {}
+      try {
+        const schemaPath = path.join(__dirname, 'schema_postgresql.sql');
+        const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+        // Execute full schema (CREATE TABLE IF NOT EXISTS ... and indexes)
+        await client.query(schemaSql);
+        // Lightweight post-migration adjustments that are safe to re-run
+        try { await client.query('ALTER TABLE IF EXISTS instructors ALTER COLUMN photo_url TYPE TEXT'); } catch (_) {}
+        try { await client.query('ALTER TABLE IF EXISTS admissions ALTER COLUMN photo_url TYPE TEXT'); } catch (_) {}
+        console.log('PostgreSQL schema ensured via schema_postgresql.sql');
+      } finally {
+        client.release();
+      }
+    } catch (e) {
+      console.error('PostgreSQL initialization error:', e.message);
+    }
     return;
   }
   const connection = await module.exports.pool.getConnection();
