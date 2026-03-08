@@ -182,7 +182,7 @@ CREATE TABLE IF NOT EXISTS student_registrations (
   id SERIAL PRIMARY KEY,
   first_name VARCHAR(100) NOT NULL,
   last_name VARCHAR(100) NOT NULL,
-  email VARCHAR(255) NOT NULL UNIQUE,
+  email VARCHAR(255) NOT NULL,
   phone VARCHAR(50) NOT NULL,
   batch VARCHAR(20) NOT NULL CHECK (batch IN ('batch1', 'batch2', 'batch3', 'batch4', 'batchA1')),
   email_verified BOOLEAN DEFAULT FALSE,

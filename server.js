@@ -429,6 +429,7 @@ async function initializeDatabase() {
         try { await client.query('ALTER TABLE IF EXISTS admissions ALTER COLUMN photo_url TYPE TEXT'); } catch (_) {}
         try { await client.query('DROP INDEX IF EXISTS uniq_admissions_email'); } catch (_) {}
         try { await client.query('DROP INDEX IF EXISTS uniq_admissions_phone'); } catch (_) {}
+        try { await client.query('ALTER TABLE student_registrations DROP CONSTRAINT IF EXISTS student_registrations_email_key'); } catch (_) {}
         console.log('PostgreSQL schema ensured via schema_postgresql.sql');
       } finally {
         client.release();
@@ -604,7 +605,7 @@ async function initializeDatabase() {
         id INT AUTO_INCREMENT PRIMARY KEY,
         first_name VARCHAR(100) NOT NULL,
         last_name VARCHAR(100) NOT NULL,
-        email VARCHAR(255) NOT NULL UNIQUE,
+        email VARCHAR(255) NOT NULL,
         phone VARCHAR(50) NOT NULL,
         batch ENUM('batch1', 'batch2', 'batch3', 'batch4', 'batchA1') NOT NULL,
         email_verified BOOLEAN DEFAULT FALSE,
@@ -615,6 +616,9 @@ async function initializeDatabase() {
         INDEX idx_verification_token (verification_token)
       )
     `);
+
+    // Allow duplicates by removing unique constraint on email
+    try { await connection.query('ALTER TABLE student_registrations DROP INDEX IF EXISTS uniq_student_registrations_email'); } catch (e) {}
 
     // Check if admin user exists
     const [rows] = await connection.query("SELECT id FROM users WHERE username = 'admin'");
@@ -1872,6 +1876,63 @@ app.post('/api/student-register', async (req, res) => {
   }
 });
 
+// Resend verification email endpoint
+app.post('/api/resend-student-verification', async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ message: 'Email required' });
+
+  try {
+    const students = await query('SELECT * FROM student_registrations WHERE email = ?', [email]);
+    if (students.length === 0) {
+      return res.status(404).json({ message: 'Student not found' });
+    }
+
+    const student = students[0];
+    if (student.email_verified) {
+      return res.status(400).json({ message: 'Email already verified' });
+    }
+
+    // Generate new token
+    const verificationToken = uuidv4();
+    await query('UPDATE student_registrations SET verification_token = ?, verification_sent_at = NOW() WHERE id = ?', [verificationToken, student.id]);
+
+    // Send email
+    const verificationLink = `${req.protocol}://${req.get('host')}/verify-student-email?token=${verificationToken}&email=${encodeURIComponent(email)}`;
+    const mailOptions = {
+      to: email,
+      from: EMAIL_USER,
+      subject: 'Resend: Verify your Student Account - WTSKF-GOA',
+      html: `
+        <html>
+        <body>
+          <h2>Resend: Verify Your Student Account</h2>
+          <p>Hi ${student.first_name} ${student.last_name},</p>
+          <p>Please verify your account.</p>
+          <p>Your login details:</p>
+          <ul>
+            <li>Email: ${email}</li>
+            <li>Password: karate@${student.batch}</li>
+          </ul>
+          <p>Click here to verify your account: <a href="${verificationLink}">Verify Account</a></p>
+          <p>This link expires in 24 hours.</p>
+          <p>If you didn't register, ignore this email.</p>
+        </body>
+        </html>
+      `
+    };
+    sendMail(mailOptions).then(() => {
+      console.log('Resend verification email sent to:', email);
+    }).catch((emailError) => {
+      console.error('Error sending resend verification email:', emailError);
+    });
+
+    res.json({ message: 'Verification link resent' });
+  } catch (err) {
+    console.error('Resend verification error:', err);
+    res.status(500).json({ message: 'Error resending verification' });
+  }
+});
+
 // Student email verification endpoint
 app.get('/verify-student-email', async (req, res) => {
   try {
@@ -1959,7 +2020,7 @@ app.get('/api/create-student-table', async (req, res) => {
         id INT AUTO_INCREMENT PRIMARY KEY,
         first_name VARCHAR(100) NOT NULL,
         last_name VARCHAR(100) NOT NULL,
-        email VARCHAR(255) NOT NULL UNIQUE,
+        email VARCHAR(255) NOT NULL,
         phone VARCHAR(50) NOT NULL,
         batch ENUM('batch1', 'batch2', 'batch3', 'batch4', 'batchA1') NOT NULL,
         email_verified BOOLEAN DEFAULT FALSE,
