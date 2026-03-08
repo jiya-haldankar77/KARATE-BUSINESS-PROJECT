@@ -276,8 +276,8 @@ const SMTP_PORT = Number(process.env.SMTP_PORT || '465');
 const transporter = (nodemailer && EMAIL_USER && EMAIL_PASS)
   ? nodemailer.createTransport({
       host: 'smtp.gmail.com',
-      port: 587,
-      secure: false,
+      port: SMTP_PORT,
+      secure: SMTP_PORT === 465,
       auth: {
         user: EMAIL_USER,
         pass: EMAIL_PASS
