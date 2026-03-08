@@ -275,15 +275,10 @@ const SMTP_PORT = Number(process.env.SMTP_PORT || '465');
 // Nodemailer configuration
 const transporter = (nodemailer && EMAIL_USER && EMAIL_PASS)
   ? nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: SMTP_PORT,
-      secure: SMTP_PORT === 465,
+      service: 'gmail',
       auth: {
         user: EMAIL_USER,
         pass: EMAIL_PASS
-      },
-      tls: {
-        rejectUnauthorized: false
       }
     })
   : null;
