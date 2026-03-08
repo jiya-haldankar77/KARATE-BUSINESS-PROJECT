@@ -288,6 +288,8 @@ const transporter = (nodemailer && EMAIL_USER && EMAIL_PASS)
     })
   : null;
 
+console.log('Transporter created:', !!transporter);
+
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || '';
 if (SENDGRID_API_KEY) {
   try { if (sgMail) sgMail.setApiKey(SENDGRID_API_KEY); } catch (_) {}
@@ -306,50 +308,28 @@ try {
 }
 
 async function sendMail(mailOptions) {
+  console.log('Attempting to send email to:', mailOptions.to);
   if (process.env.SENDGRID_API_KEY && sgMail) {
+    console.log('Using SendGrid for email');
     try {
-      await sgMail.send({
-        to: mailOptions.to,
-        from: EMAIL_USER,
-        subject: mailOptions.subject,
-        html: mailOptions.html
-      });
+      await sgMail.send(mailOptions);
+      console.log('Email sent successfully via SendGrid to:', mailOptions.to);
+      return;
     } catch (e) {
       console.error('SendGrid send error:', e);
+      // Fallback to SMTP if SendGrid fails
     }
+  }
+  if (!transporter) {
+    console.log('No email transporter available');
     return;
   }
-  if (!transporter) return;
+  console.log('Using SMTP for email');
   try {
-    await transporter.sendMail(mailOptions);
+    const info = await transporter.sendMail(mailOptions);
+    console.log('Email sent successfully via SMTP to:', mailOptions.to, 'MessageId:', info.messageId);
   } catch (e) {
-    const primaryPort = SMTP_PORT;
-    const fallbackPort = primaryPort === 587 ? 465 : 587;
-    const hosts = ['smtp.gmail.com', 'gmail-smtp-msa.l.google.com'];
-    let lastErr = e;
-    for (const h of hosts) {
-      try {
-        if (!nodemailer) break;
-        const alt = nodemailer.createTransport({
-          host: h,
-          port: fallbackPort,
-          secure: fallbackPort === 465,
-          requireTLS: fallbackPort === 587,
-          auth: { user: EMAIL_USER, pass: EMAIL_PASS },
-          connectionTimeout: 60000,
-          greetingTimeout: 60000,
-          socketTimeout: 60000,
-          family: 4,
-          tls: { minVersion: 'TLSv1.2', servername: h }
-        });
-        await alt.sendMail(mailOptions);
-        return;
-      } catch (err2) {
-        lastErr = err2;
-      }
-    }
-    console.error('SMTP send error:', lastErr);
-    return;
+    console.error('SMTP send error:', e);
   }
 }
 
