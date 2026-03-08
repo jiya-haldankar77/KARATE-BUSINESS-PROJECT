@@ -274,7 +274,7 @@ const SMTP_PORT = Number(process.env.SMTP_PORT || '465');
 
 // Nodemailer configuration
 const transporter = (nodemailer && EMAIL_USER && EMAIL_PASS)
-  ? nodemailer.createTransporter({
+  ? nodemailer.createTransport({
       host: 'smtp.gmail.com',
       port: 587,
       secure: false,
