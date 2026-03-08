@@ -1,6 +1,6 @@
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 
-SibApiV3Sdk.ApiClient.instance.authentications['api-key'].apiKey = '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';
+SibApiV3Sdk.ApiClient.instance.authentications['api-key'].apiKey = process.env.BREVO_API_KEY;
 
 async function sendTestEmail(toEmail) {
   const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
