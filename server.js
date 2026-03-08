@@ -276,8 +276,8 @@ const SMTP_PORT = Number(process.env.SMTP_PORT || '465');
 const transporter = (nodemailer && EMAIL_USER && EMAIL_PASS)
   ? nodemailer.createTransport({
       host: 'smtp.gmail.com',
-      port: SMTP_PORT,
-      secure: SMTP_PORT === 465,
+      port: 587,
+      secure: false,
       auth: {
         user: EMAIL_USER,
         pass: EMAIL_PASS
@@ -312,17 +312,6 @@ try {
 
 async function sendMail(mailOptions) {
   console.log('Attempting to send email to:', mailOptions.to);
-  if (process.env.SENDGRID_API_KEY && sgMail) {
-    console.log('Using SendGrid for email');
-    try {
-      await sgMail.send(mailOptions);
-      console.log('Email sent successfully via SendGrid to:', mailOptions.to);
-      return;
-    } catch (e) {
-      console.error('SendGrid send error:', e);
-      // Fallback to SMTP if SendGrid fails
-    }
-  }
   if (!transporter) {
     console.log('No email transporter available');
     return;
