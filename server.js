@@ -4,8 +4,8 @@ const express = require('express');
 const cors = require('cors');
 const mysql = require('mysql2/promise');
 const path = require('path');
-let nodemailer;
-try { nodemailer = require('nodemailer'); } catch (e) { nodemailer = null; }
+let brevo;
+try { brevo = require('sib-api-v3-sdk'); } catch (e) { brevo = null; }
 let sgMail;
 try { sgMail = require('@sendgrid/mail'); } catch (e) { sgMail = null; }
 const { v4: uuidv4 } = require('uuid');
@@ -270,59 +270,49 @@ const EMAIL_PASS = process.env.EMAIL_PASS || '';
 console.log('📧 Email configuration:');
 console.log('EMAIL_USER:', EMAIL_USER);
 console.log('EMAIL_PASS configured:', !!EMAIL_PASS);
-const SMTP_PORT = Number(process.env.SMTP_PORT || '465');
 
-// Nodemailer configuration
-const transporter = (nodemailer && EMAIL_USER && EMAIL_PASS)
-  ? nodemailer.createTransport({
-      host: 'smtp.gmail.com',
-      port: 587,
-      secure: false,
-      auth: {
-        user: EMAIL_USER,
-        pass: EMAIL_PASS
-      },
-      tls: {
-        rejectUnauthorized: false
-      },
-      connectionTimeout: 60000,
-      greetingTimeout: 30000,
-      socketTimeout: 60000
-    })
-  : null;
-
-console.log('Transporter created:', !!transporter);
+// Brevo configuration
+const BREVO_API_KEY = process.env.BREVO_API_KEY || '';
+if (brevo && BREVO_API_KEY) {
+  brevo.ApiClient.instance.authentications['api-key'].apiKey = BREVO_API_KEY;
+}
 
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || '';
 if (SENDGRID_API_KEY) {
   try { if (sgMail) sgMail.setApiKey(SENDGRID_API_KEY); } catch (_) {}
 }
 
-try {
-  if (!SENDGRID_API_KEY && process.env.SMTP_VERIFY === 'true' && transporter) {
-    transporter.verify().then(() => {
-      console.log('SMTP ready: true');
-    }).catch(err => {
-      console.error('SMTP verify error:', err);
-    });
-  }
-} catch (e) {
-  console.error('SMTP verify setup error:', e);
-}
-
 async function sendMail(mailOptions) {
   console.log('Attempting to send email to:', mailOptions.to);
-  if (!transporter) {
-    console.log('No email transporter available');
-    return;
+  if (brevo && BREVO_API_KEY) {
+    console.log('Using Brevo for email');
+    try {
+      const apiInstance = new brevo.TransactionalEmailsApi();
+      const sendSmtpEmail = {
+        sender: { email: mailOptions.from || EMAIL_USER, name: 'WTSKF-GOA' },
+        to: [{ email: mailOptions.to }],
+        subject: mailOptions.subject,
+        htmlContent: mailOptions.html
+      };
+      const result = await apiInstance.sendTransacEmail(sendSmtpEmail);
+      console.log('Email sent successfully via Brevo to:', mailOptions.to, 'MessageId:', result.messageId);
+      return;
+    } catch (e) {
+      console.error('Brevo send error:', e);
+      // Fallback to SendGrid
+    }
   }
-  console.log('Using SMTP for email');
-  try {
-    const info = await transporter.sendMail(mailOptions);
-    console.log('Email sent successfully via SMTP to:', mailOptions.to, 'MessageId:', info.messageId);
-  } catch (e) {
-    console.error('SMTP send error:', e);
+  if (SENDGRID_API_KEY && sgMail) {
+    console.log('Using SendGrid for email');
+    try {
+      await sgMail.send(mailOptions);
+      console.log('Email sent successfully via SendGrid to:', mailOptions.to);
+      return;
+    } catch (e) {
+      console.error('SendGrid send error:', e);
+    }
   }
+  console.log('No email service available');
 }
 
 // Create MySQL connection pool
