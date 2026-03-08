@@ -274,10 +274,10 @@ const SMTP_PORT = Number(process.env.SMTP_PORT || '465');
 
 // Nodemailer configuration
 const transporter = (nodemailer && EMAIL_USER && EMAIL_PASS)
-  ? nodemailer.createTransport({
+  ? nodemailer.createTransporter({
       host: 'smtp.gmail.com',
-      port: SMTP_PORT,
-      secure: SMTP_PORT === 465,
+      port: 587,
+      secure: false,
       auth: {
         user: EMAIL_USER,
         pass: EMAIL_PASS
@@ -1930,6 +1930,26 @@ app.post('/api/resend-student-verification', async (req, res) => {
   } catch (err) {
     console.error('Resend verification error:', err);
     res.status(500).json({ message: 'Error resending verification' });
+  }
+});
+
+// Test email endpoint
+app.post('/api/test-email', async (req, res) => {
+  const { to } = req.body;
+  if (!to) return res.status(400).json({ message: 'To email required' });
+
+  const mailOptions = {
+    to,
+    from: EMAIL_USER,
+    subject: 'Test Email from Karate Admin',
+    html: `<p>This is a test email sent at ${new Date().toISOString()}</p>`
+  };
+
+  try {
+    const info = await sendMail(mailOptions);
+    res.json({ message: 'Test email sent', info });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to send test email', error: err.message });
   }
 });
 
