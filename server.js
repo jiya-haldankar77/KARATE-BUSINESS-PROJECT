@@ -270,18 +270,41 @@ const EMAIL_PASS = process.env.EMAIL_PASS || '';
 console.log('📧 Email configuration:');
 console.log('EMAIL_USER:', EMAIL_USER);
 console.log('EMAIL_PASS configured:', !!EMAIL_PASS);
-const SMTP_PORT = Number(process.env.SMTP_PORT || '465');
 
-// Nodemailer configuration
-const transporter = (nodemailer && EMAIL_USER && EMAIL_PASS)
-  ? nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: EMAIL_USER,
-        pass: EMAIL_PASS
-      }
-    })
-  : null;
+const MAILGUN_HOST = process.env.MAILGUN_HOST || '';
+const MAILGUN_PORT = Number(process.env.MAILGUN_PORT || '587');
+const MAILGUN_USER = process.env.MAILGUN_USER || '';
+const MAILGUN_PASS = process.env.MAILGUN_PASS || '';
+
+// Nodemailer configuration - prefer Mailgun if set, else Gmail
+let transporter;
+if (MAILGUN_HOST && MAILGUN_USER && MAILGUN_PASS) {
+  transporter = nodemailer.createTransport({
+    host: MAILGUN_HOST,
+    port: MAILGUN_PORT,
+    secure: MAILGUN_PORT === 465,
+    auth: {
+      user: MAILGUN_USER,
+      pass: MAILGUN_PASS
+    },
+    tls: {
+      rejectUnauthorized: false
+    }
+  });
+  console.log('Using Mailgun SMTP');
+} else if (EMAIL_USER && EMAIL_PASS) {
+  transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: EMAIL_USER,
+      pass: EMAIL_PASS
+    }
+  });
+  console.log('Using Gmail SMTP');
+} else {
+  transporter = null;
+  console.log('No email configuration');
+}
 
 console.log('Transporter created:', !!transporter);
 
