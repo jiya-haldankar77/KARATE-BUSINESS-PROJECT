@@ -1,0 +1,28 @@
+# Production Environment Variables
+NODE_ENV=production
+PORT=3000
+
+# Database Configuration
+DB_HOST=localhost
+DB_USER=root
+DB_PASS=upsc2027
+DB_NAME=kartae
+
+# Email Configuration
+EMAIL_USER=karatesubhash455@gmail.com
+EMAIL_PASS=dfym cxhq ljfi rkib
+
+# JWT Configuration
+JWT_SECRET=your-super-secret-jwt-key-change-this-in-production-2024
+
+# Redis Configuration
+REDIS_URL=redis://localhost:6379
+
+# Rate Limiting
+RATE_LIMIT_WINDOW_MS=900000
+RATE_LIMIT_MAX_REQUESTS=100
+AUTH_RATE_LIMIT_MAX_REQUESTS=5
+
+# Cache TTL (in seconds)
+CACHE_TTL_DASHBOARD=600
+CACHE_TTL_STUDENT=300

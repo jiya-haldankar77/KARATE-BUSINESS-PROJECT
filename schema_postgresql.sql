@@ -54,14 +54,11 @@ CREATE TABLE IF NOT EXISTS admissions (
   centre VARCHAR(255),
   batch_timing VARCHAR(255),
   photo_url TEXT,
-  email_verified BOOLEAN DEFAULT FALSE,
-  verification_token VARCHAR(255),
-  verification_sent_at TIMESTAMP NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_admissions_email ON admissions(email);
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_admissions_phone ON admissions(phone);
+CREATE INDEX IF NOT EXISTS idx_admissions_email ON admissions(email);
+CREATE INDEX IF NOT EXISTS idx_admissions_phone ON admissions(phone);
 
 -- Fees Payments (for payment screenshot submissions)
 CREATE TABLE IF NOT EXISTS fees_payments (

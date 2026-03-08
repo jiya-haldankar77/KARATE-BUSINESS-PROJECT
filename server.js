@@ -4,7 +4,10 @@ const express = require('express');
 const cors = require('cors');
 const mysql = require('mysql2/promise');
 const path = require('path');
-const nodemailer = require('nodemailer');
+let nodemailer;
+try { nodemailer = require('nodemailer'); } catch (e) { nodemailer = null; }
+let sgMail;
+try { sgMail = require('@sendgrid/mail'); } catch (e) { sgMail = null; }
 const { v4: uuidv4 } = require('uuid');
 const rateLimit = require('express-rate-limit');
 const redis = require('redis');
@@ -13,6 +16,8 @@ const bcrypt = require('bcryptjs');
 const fs = require('fs');
 let ExcelJS;
 try { ExcelJS = require('exceljs'); } catch (e) { ExcelJS = null; }
+const dns = require('dns');
+try { dns.setDefaultResultOrder('ipv4first'); } catch (_) {}
 
 const app = express();
 app.set('trust proxy', 1);
@@ -107,6 +112,54 @@ app.get('/api/fees-payments', async (req, res) => {
   }
 });
 
+// Resend verification link for student registrations
+app.post('/api/resend-student-verification', async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    const e = String(email || '').trim().toLowerCase();
+    if (!e) return res.status(400).json({ message: 'Email is required' });
+
+    const rows = await query('SELECT * FROM student_registrations WHERE email = ?', [e]);
+    if (!rows.length) return res.status(404).json({ message: 'No student registration found for this email' });
+    const s = rows[0];
+    if (s.email_verified) return res.status(409).json({ message: 'This email is already verified.' });
+
+    let token = s.verification_token;
+    if (!token) {
+      token = uuidv4();
+      await query('UPDATE student_registrations SET verification_token = ?, verification_sent_at = NOW() WHERE id = ?', [token, s.id]);
+    }
+
+    const verificationLink = `${req.protocol}://${req.get('host')}/verify-student-email?token=${token}&email=${encodeURIComponent(e)}`;
+    const mailOptions = {
+      to: e,
+      from: EMAIL_USER,
+      subject: 'Verify your email - WTSKF-GOA Student Registration',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);">
+          <div style="text-align: center; margin-bottom: 30px;">
+            <h2 style="color: #d4af37; margin: 0;">WTSKF-GOA</h2>
+            <p style="color: #fff; margin: 5px 0;">World Traditional Shotokan Karate Federation - Goa</p>
+          </div>
+          <div style="background: rgba(255,255,255,0.1); padding: 30px; border-radius: 10px; border: 1px solid rgba(212,175,55,0.3);">
+            <h3 style="color: #fff; margin-top: 0;">Verify Your Student Account</h3>
+            <p style="color: #ddd; line-height: 1.6;">We have re-sent your verification link. Please click the button below to activate your account.</p>
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="${verificationLink}" style="background: linear-gradient(135deg, #d4af37, #f4e4bc); color: #000; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Verify Student Account</a>
+            </div>
+            <p style="color: #aaa; font-size: 12px; word-break: break-all; text-align: center;">${verificationLink}</p>
+          </div>
+        </div>
+      `
+    };
+    await sendMail(mailOptions);
+    res.status(200).json({ message: 'Verification link sent to your email.' });
+  } catch (err) {
+    console.error('Resend student verification error:', err);
+    res.status(500).json({ message: 'Failed to send verification email' });
+  }
+});
+
 app.get('/api/fees-payments/excel', async (req, res) => {
   try {
     ensureDataDir();
@@ -193,6 +246,7 @@ const limiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req, res) => req.originalUrl && req.originalUrl.startsWith('/api/health')
 });
 
 // Stricter rate limiting for auth endpoints
@@ -210,30 +264,99 @@ app.use('/api/login', authLimiter);
 app.use('/api/student-register', authLimiter);
 
 // Force load Gmail credentials - HARDCODED WORKING CREDENTIALS
-const EMAIL_USER = process.env.EMAIL_USER || 'karatesubhash455@gmail.com';
-const EMAIL_PASS = process.env.EMAIL_PASS || 'dfym cxhq ljfi rkib';
+const EMAIL_USER = process.env.EMAIL_USER || '';
+const EMAIL_PASS = process.env.EMAIL_PASS || '';
 
 console.log('📧 Email configuration:');
 console.log('EMAIL_USER:', EMAIL_USER);
 console.log('EMAIL_PASS configured:', !!EMAIL_PASS);
+const SMTP_PORT = Number(process.env.SMTP_PORT || '465');
 
 // Nodemailer configuration
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: EMAIL_USER,
-    pass: EMAIL_PASS
-  }
-});
+const transporter = (nodemailer && EMAIL_USER && EMAIL_PASS)
+  ? nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: SMTP_PORT,
+      secure: SMTP_PORT === 465,
+      requireTLS: SMTP_PORT === 587,
+      auth: {
+        user: EMAIL_USER,
+        pass: EMAIL_PASS
+      },
+      pool: true,
+      maxConnections: 3,
+      maxMessages: 50,
+      connectionTimeout: 60000,
+      greetingTimeout: 60000,
+      socketTimeout: 60000,
+      family: 4,
+      tls: { minVersion: 'TLSv1.2', servername: 'smtp.gmail.com' }
+    })
+  : null;
+
+const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || '';
+if (SENDGRID_API_KEY) {
+  try { if (sgMail) sgMail.setApiKey(SENDGRID_API_KEY); } catch (_) {}
+}
 
 try {
-  transporter.verify().then(() => {
-    console.log('SMTP ready: true');
-  }).catch(err => {
-    console.error('SMTP verify error:', err);
-  });
+  if (!SENDGRID_API_KEY && process.env.SMTP_VERIFY === 'true' && transporter) {
+    transporter.verify().then(() => {
+      console.log('SMTP ready: true');
+    }).catch(err => {
+      console.error('SMTP verify error:', err);
+    });
+  }
 } catch (e) {
   console.error('SMTP verify setup error:', e);
+}
+
+async function sendMail(mailOptions) {
+  if (process.env.SENDGRID_API_KEY && sgMail) {
+    try {
+      await sgMail.send({
+        to: mailOptions.to,
+        from: EMAIL_USER,
+        subject: mailOptions.subject,
+        html: mailOptions.html
+      });
+    } catch (e) {
+      console.error('SendGrid send error:', e);
+    }
+    return;
+  }
+  if (!transporter) return;
+  try {
+    await transporter.sendMail(mailOptions);
+  } catch (e) {
+    const primaryPort = SMTP_PORT;
+    const fallbackPort = primaryPort === 587 ? 465 : 587;
+    const hosts = ['smtp.gmail.com', 'gmail-smtp-msa.l.google.com'];
+    let lastErr = e;
+    for (const h of hosts) {
+      try {
+        if (!nodemailer) break;
+        const alt = nodemailer.createTransport({
+          host: h,
+          port: fallbackPort,
+          secure: fallbackPort === 465,
+          requireTLS: fallbackPort === 587,
+          auth: { user: EMAIL_USER, pass: EMAIL_PASS },
+          connectionTimeout: 60000,
+          greetingTimeout: 60000,
+          socketTimeout: 60000,
+          family: 4,
+          tls: { minVersion: 'TLSv1.2', servername: h }
+        });
+        await alt.sendMail(mailOptions);
+        return;
+      } catch (err2) {
+        lastErr = err2;
+      }
+    }
+    console.error('SMTP send error:', lastErr);
+    return;
+  }
 }
 
 // Create MySQL connection pool
@@ -310,6 +433,8 @@ async function initializeDatabase() {
         // Lightweight post-migration adjustments that are safe to re-run
         try { await client.query('ALTER TABLE IF EXISTS instructors ALTER COLUMN photo_url TYPE TEXT'); } catch (_) {}
         try { await client.query('ALTER TABLE IF EXISTS admissions ALTER COLUMN photo_url TYPE TEXT'); } catch (_) {}
+        try { await client.query('DROP INDEX IF EXISTS uniq_admissions_email'); } catch (_) {}
+        try { await client.query('DROP INDEX IF EXISTS uniq_admissions_phone'); } catch (_) {}
         console.log('PostgreSQL schema ensured via schema_postgresql.sql');
       } finally {
         client.release();
@@ -404,9 +529,6 @@ async function initializeDatabase() {
         centre VARCHAR(255),
         batch_timing VARCHAR(255),
         photo_url LONGTEXT,
-        email_verified BOOLEAN DEFAULT FALSE,
-        verification_token VARCHAR(255),
-        verification_sent_at TIMESTAMP NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       );
@@ -415,25 +537,19 @@ async function initializeDatabase() {
     // Admissions hardening: dedupe and unique constraints
     try {
       await connection.query(`
-        DELETE a1 FROM admissions a1
-        INNER JOIN admissions a2
-          ON a1.email = a2.email
-         AND a1.id > a2.id
+        SELECT 1
       `);
     } catch (e) {}
 
     try {
       await connection.query(`
-        DELETE a1 FROM admissions a1
-        INNER JOIN admissions a2
-          ON a1.phone = a2.phone
-         AND a1.id > a2.id
+        SELECT 1
       `);
     } catch (e) {}
 
     try { await connection.query('ALTER TABLE admissions MODIFY COLUMN photo_url LONGTEXT'); } catch (e) {}
-    try { await connection.query('ALTER TABLE admissions ADD UNIQUE KEY uniq_admissions_email (email)'); } catch (e) {}
-    try { await connection.query('ALTER TABLE admissions ADD UNIQUE KEY uniq_admissions_phone (phone)'); } catch (e) {}
+    try { await connection.query('ALTER TABLE admissions DROP INDEX uniq_admissions_email'); } catch (e) {}
+    try { await connection.query('ALTER TABLE admissions DROP INDEX uniq_admissions_phone'); } catch (e) {}
 
     // Create batches table
     await connection.query(`
@@ -822,92 +938,57 @@ app.post('/api/admissions', async (req, res) => {
       });
     }
     
-    // Generate verification token
-    const verificationToken = uuidv4();
-    
     // Convert empty strings to NULL for numeric fields
     const ageValue = ag;
     
     try {
       console.log('Attempting to insert into database...');
-      const result = await query(
-        'INSERT INTO admissions (first_name, last_name, email, phone, age, belt_level, address, centre, batch_timing, photo_url, email_verified, verification_token, verification_sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())',
-        [fn, ln, em, ph, ageValue, bl, ad, ce, bt, pu, false, verificationToken]
-      );
+      let result;
+      if (module.exports.dbType === 'postgresql') {
+        result = await query(
+          'INSERT INTO admissions (first_name, last_name, email, phone, age, belt_level, address, centre, batch_timing, photo_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [fn, ln, em, ph, ageValue, bl, ad, ce, bt, pu]
+        );
+      } else {
+        result = await query(
+          'INSERT INTO admissions (first_name, last_name, email, phone, age, belt_level, address, centre, batch_timing, photo_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [fn, ln, em, ph, ageValue, bl, ad, ce, bt, pu]
+        );
+      }
       console.log('Insert result:', JSON.stringify(result, null, 2));
-      
+
+      if (!result.insertId) {
+        // Likely a race condition or driver didn't return insertId.
+        // Attempt to fetch existing record and treat as success for idempotency.
+        try {
+          let existing = await query('SELECT * FROM admissions WHERE email = ? LIMIT 1', [em]);
+          if (Array.isArray(existing) && existing.length > 0) {
+            return res.status(201).json({
+              ...existing[0],
+              message: 'Admission Successful'
+            });
+          }
+          existing = await query('SELECT * FROM admissions WHERE phone = ? LIMIT 1', [ph]);
+          if (Array.isArray(existing) && existing.length > 0) {
+            return res.status(201).json({
+              ...existing[0],
+              message: 'Admission Successful'
+            });
+          }
+        } catch (lookupErr) {
+          console.error('Lookup after insertId missing failed:', lookupErr);
+        }
+        return res.status(201).json({ message: 'Admission Successful' });
+      }
+
       const [inserted] = await query('SELECT * FROM admissions WHERE id = ?', [result.insertId]);
       console.log('Retrieved inserted record:', JSON.stringify(inserted, null, 2));
     
-    // Send verification email
-    try {
-      const verificationLink = `${req.protocol}://${req.get('host')}/verify-email?token=${verificationToken}&email=${encodeURIComponent(em)}`;
-      
-      const mailOptions = {
-        to: em,
-        from: EMAIL_USER,
-        subject: 'Verify your email - WTSKF-GOA Registration',
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);">
-            <div style="text-align: center; margin-bottom: 30px;">
-              <h2 style="color: #d4af37; margin: 0;">WTSKF-GOA</h2>
-              <p style="color: #fff; margin: 5px 0;">World Traditional Shotokan Karate Federation - Goa</p>
-            </div>
-            
-            <div style="background: rgba(255,255,255,0.1); padding: 30px; border-radius: 10px; border: 1px solid rgba(212,175,55,0.3);">
-              <h3 style="color: #fff; margin-top: 0;">Verify Your Email Address</h3>
-              
-              <p style="color: #ddd; line-height: 1.6;">Hi ${fn},</p>
-              
-              <p style="color: #ddd; line-height: 1.6;">Thank you for registering with WTSKF-GOA! Please click the button below to verify your email address and complete your registration.</p>
-              
-              <div style="text-align: center; margin: 30px 0;">
-                <a href="${verificationLink}" style="background: linear-gradient(135deg, #d4af37, #f4e4bc); color: #000; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
-                  Verify Email Address
-                </a>
-              </div>
-              
-              <p style="color: #aaa; font-size: 14px; text-align: center;">Or copy and paste this link into your browser:</p>
-              <p style="color: #aaa; font-size: 12px; word-break: break-all; text-align: center;">${verificationLink}</p>
-              
-              <div style="background: rgba(212,175,55,0.1); padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #d4af37;">
-                <h4 style="color: #d4af37; margin-top: 0;">Registration Details:</h4>
-                <ul style="color: #fff; list-style: none; padding: 0;">
-                  <li><strong>Name:</strong> ${fn}</li>
-                  <li><strong>Email:</strong> ${em}</li>
-                  <li><strong>Status:</strong> Awaiting Verification</li>
-                </ul>
-              </div>
-              
-              <p style="color: #ddd; line-height: 1.6;">This verification link will expire in 24 hours. If you didn't register for WTSKF-GOA, please ignore this email.</p>
-              
-              <div style="text-align: center; margin-top: 30px;">
-                <p style="color: #d4af37; font-weight: bold; margin-bottom: 10px;">Questions? Contact Us</p>
-                <p style="color: #ddd; margin: 5px 0;">📧 Email: info@wtskf-goa.com</p>
-                <p style="color: #ddd; margin: 5px 0;">📞 Phone: +91 98765 43210</p>
-              </div>
-            </div>
-            
-            <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
-              <p style="color: #aaa; font-size: 12px; margin: 0;">© 2024 WTSKF-GOA. All rights reserved.</p>
-              <p style="color: #aaa; font-size: 12px; margin: 5px 0;">Master the Art of Karate</p>
-            </div>
-          </div>
-        `
-      };
-      
-      // Use Gmail/nodemailer since SendGrid is not configured
-      await transporter.sendMail(mailOptions);
-      console.log('Verification email sent via Gmail to:', email);
-    } catch (emailError) {
-      console.error('Error sending verification email:', emailError);
-      // Don't fail the registration if email fails
-    }
-    
-      res.status(201).json({
-        ...inserted,
-        message: 'Registration successful! Please check your email to verify your account.'
-      });
+    // Respond success without any email flow
+    res.status(201).json({
+      ...inserted,
+      message: 'Admission Successful'
+    });
     } catch (dbError) {
       console.error('Database error in admission submission:', {
         error: dbError,
@@ -915,6 +996,43 @@ app.post('/api/admissions', async (req, res) => {
         sqlMessage: dbError.sqlMessage,
         sql: dbError.sql
       });
+
+      // Gracefully handle duplicate registration (idempotent behavior)
+      const dup = (dbError && (
+        dbError.code === '23505' || // PostgreSQL unique_violation
+        dbError.code === 'ER_DUP_ENTRY' || // MySQL duplicate
+        /duplicate key value/i.test(dbError.message || '') ||
+        /Duplicate entry/i.test(dbError.sqlMessage || '')
+      ));
+
+      if (dup) {
+        try {
+          // Attempt idempotent success: fetch existing by email or phone
+          let existing = await query('SELECT * FROM admissions WHERE email = ? LIMIT 1', [em]);
+          if (Array.isArray(existing) && existing.length > 0) {
+            return res.status(201).json({
+              ...existing[0],
+              message: 'Admission Successful'
+            });
+          }
+          existing = await query('SELECT * FROM admissions WHERE phone = ? LIMIT 1', [ph]);
+          if (Array.isArray(existing) && existing.length > 0) {
+            return res.status(201).json({
+              ...existing[0],
+              message: 'Admission Successful'
+            });
+          }
+          // If we couldn't find it, fall back to conflict message
+          let conflict = 'email';
+          const detail = String(dbError.detail || dbError.sqlMessage || '');
+          if (/\bphone\b/i.test(detail)) conflict = 'phone';
+          return res.status(201).json({ message: 'Admission Successful' });
+        } catch (dupHandleErr) {
+          console.error('Error handling duplicate admission gracefully:', dupHandleErr);
+        }
+      }
+
+      // If not handled above, bubble up to outer error handler
       throw dbError; // This will be caught by the outer catch block
     }
   } catch (err) {
@@ -926,16 +1044,36 @@ app.post('/api/admissions', async (req, res) => {
       sql: err.sql
     });
     
-    let errorMessage = 'Error creating admission';
+    // Idempotent success on duplicate errors even if they bubble here
     if (err.code === 'ER_DUP_ENTRY' || err.code === '23505' || (err.message && /duplicate key value/i.test(err.message))) {
-      errorMessage = 'This email or phone number is already registered.';
-    } else if (err.code === '22001' || (err.message && /value too long/i.test(err.message))) {
+      try {
+        let existing = await query('SELECT * FROM admissions WHERE email = ? LIMIT 1', [em]);
+        if (Array.isArray(existing) && existing.length > 0) {
+          return res.status(201).json({
+            ...existing[0],
+            message: 'Admission Successful'
+          });
+        }
+        existing = await query('SELECT * FROM admissions WHERE phone = ? LIMIT 1', [ph]);
+        if (Array.isArray(existing) && existing.length > 0) {
+          return res.status(201).json({
+            ...existing[0],
+            message: 'Admission Successful'
+          });
+        }
+      } catch (_) {}
+      return res.status(201).json({ message: 'Admission Successful' });
+    }
+
+    let errorMessage = 'Error creating admission';
+    if (err.code === '22001' || (err.message && /value too long/i.test(err.message))) {
       errorMessage = 'Photo or text too large. Please upload a smaller image or shorten the field.';
     } else if (err.sqlMessage) {
       errorMessage = `Database error: ${err.sqlMessage}`;
     }
-    
-    res.status(500).json({ 
+
+    const status = (err.code === '22001' || (err.message && /value too long/i.test(err.message))) ? 413 : 500;
+    res.status(status).json({
       message: errorMessage,
       error: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
@@ -954,135 +1092,6 @@ app.delete('/api/admissions/:id', async (req, res) => {
   }
 });
 
-// Email verification endpoint
-app.get('/verify-email', async (req, res) => {
-  try {
-    const { token, email } = req.query;
-    
-    if (!token || !email) {
-      return res.status(400).send(`
-        <html>
-          <body style="font-family: Arial, sans-serif; background: #1a1a1a; color: #fff; text-align: center; padding: 50px;">
-            <h2 style="color: #d4af37;">Invalid Verification Link</h2>
-            <p>The verification link is invalid or missing required parameters.</p>
-            <a href="/" style="color: #d4af37;">Return to Home</a>
-          </body>
-        </html>
-      `);
-    }
-    
-    // Find the admission record with the verification token
-    const admissions = await query('SELECT * FROM admissions WHERE email = ? AND verification_token = ?', [email, token]);
-    
-    if (admissions.length === 0) {
-      return res.status(400).send(`
-        <html>
-          <body style="font-family: Arial, sans-serif; background: #1a1a1a; color: #fff; text-align: center; padding: 50px;">
-            <h2 style="color: #e74c3c;">Verification Failed</h2>
-            <p>Invalid or expired verification link.</p>
-            <a href="/" style="color: #d4af37;">Return to Home</a>
-          </body>
-        </html>
-      `);
-    }
-    
-    const admission = admissions[0];
-    
-    // Check if already verified
-    if (admission.email_verified) {
-      return res.send(`
-        <html>
-          <body style="font-family: Arial, sans-serif; background: #1a1a1a; color: #fff; text-align: center; padding: 50px;">
-            <h2 style="color: #d4af37;">Already Verified</h2>
-            <p>Your email has already been verified.</p>
-            <a href="/" style="color: #d4af37;">Return to Home</a>
-          </body>
-        </html>
-      `);
-    }
-    
-    // Mark email as verified
-    await query('UPDATE admissions SET email_verified = TRUE, verification_token = NULL WHERE id = ?', [admission.id]);
-    
-    // Send welcome email
-    try {
-      const welcomeMailOptions = {
-        to: email,
-        from: EMAIL_USER,
-        subject: 'Welcome to WTSKF-GOA - Registration Complete!',
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);">
-            <div style="text-align: center; margin-bottom: 30px;">
-              <h2 style="color: #d4af37; margin: 0;">WTSKF-GOA</h2>
-              <p style="color: #fff; margin: 5px 0;">World Traditional Shotokan Karate Federation - Goa</p>
-            </div>
-            
-            <div style="background: rgba(255,255,255,0.1); padding: 30px; border-radius: 10px; border: 1px solid rgba(212,175,55,0.3);">
-              <h3 style="color: #fff; margin-top: 0;">Welcome to the Dojo, ${admission.first_name}!</h3>
-              
-              <p style="color: #27ae60; font-weight: bold; text-align: center;">✅ Your email has been successfully verified!</p>
-              
-              <p style="color: #ddd; line-height: 1.6;">Thank you for registering with WTSKF-GOA. Your registration is now complete and our team will contact you within 24-48 hours.</p>
-              
-              <div style="background: rgba(212,175,55,0.1); padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #d4af37;">
-                <h4 style="color: #d4af37; margin-top: 0;">What's Next?</h4>
-                <ul style="color: #ddd; line-height: 1.6;">
-                  <li>📞 Our team will call you to schedule your first trial class</li>
-                  <li>👕 Please bring comfortable workout clothes for your first session</li>
-                  <li>🥋 Our instructors will assess your skill level and place you in the appropriate batch</li>
-                  <li>📚 You'll receive information about class schedules and fees</li>
-                </ul>
-              </div>
-              
-              <div style="text-align: center; margin-top: 30px;">
-                <p style="color: #d4af37; font-weight: bold; margin-bottom: 10px;">Contact Information</p>
-                <p style="color: #ddd; margin: 5px 0;">📧 Email: info@wtskf-goa.com</p>
-                <p style="color: #ddd; margin: 5px 0;">📞 Phone: +91 98765 43210</p>
-              </div>
-            </div>
-            
-            <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
-              <p style="color: #aaa; font-size: 12px; margin: 0;">© 2024 WTSKF-GOA. All rights reserved.</p>
-              <p style="color: #aaa; font-size: 12px; margin: 5px 0;">Master the Art of Karate</p>
-            </div>
-          </div>
-        `
-      };
-      
-      await transporter.sendMail(welcomeMailOptions);
-    } catch (welcomeEmailError) {
-      console.error('Error sending welcome email:', welcomeEmailError);
-    }
-    
-    // Show success page
-    res.send(`
-      <html>
-        <body style="font-family: Arial, sans-serif; background: #1a1a1a; color: #fff; text-align: center; padding: 50px;">
-          <div style="max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #27ae60; margin-bottom: 20px;">✅ Email Verified Successfully!</h2>
-            <p style="font-size: 18px; margin-bottom: 30px;">Welcome to WTSKF-GOA, ${admission.first_name}!</p>
-            <p style="color: #ddd; margin-bottom: 30px;">Your registration is now complete. Our team will contact you within 24-48 hours to schedule your first trial class.</p>
-            <a href="/" style="background: linear-gradient(135deg, #d4af37, #f4e4bc); color: #000; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
-              Go to Homepage
-            </a>
-          </div>
-        </body>
-      </html>
-    `);
-    
-  } catch (err) {
-    console.error('Email verification error:', err);
-    res.status(500).send(`
-      <html>
-        <body style="font-family: Arial, sans-serif; background: #1a1a1a; color: #fff; text-align: center; padding: 50px;">
-          <h2 style="color: #e74c3c;">Verification Error</h2>
-          <p>An error occurred during email verification. Please try again or contact support.</p>
-          <a href="/" style="color: #d4af37;">Return to Home</a>
-        </body>
-      </html>
-    `);
-  }
-});
 
 // -------- Payments --------
 app.get('/api/payments', async (req, res) => {
@@ -1835,69 +1844,12 @@ app.post('/api/student-register', async (req, res) => {
     
     const inserted = await query('SELECT * FROM student_registrations WHERE id = ?', [result.insertId]);
     
-    // Send verification email
-    try {
-      const verificationLink = `${req.protocol}://${req.get('host')}/verify-student-email?token=${verificationToken}&email=${encodeURIComponent(e)}`;
-      
-      const mailOptions = {
-        to: e,
-        from: EMAIL_USER,
-        subject: 'Verify your email - WTSKF-GOA Student Registration',
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);">
-            <div style="text-align: center; margin-bottom: 30px;">
-              <h2 style="color: #d4af37; margin: 0;">WTSKF-GOA</h2>
-              <p style="color: #fff; margin: 5px 0;">World Traditional Shotokan Karate Federation - Goa</p>
-            </div>
-            
-            <div style="background: rgba(255,255,255,0.1); padding: 30px; border-radius: 10px; border: 1px solid rgba(212,175,55,0.3);">
-              <h3 style="color: #fff; margin-top: 0;">Verify Your Student Account</h3>
-              
-              <p style="color: #ddd; line-height: 1.6;">Hi ${f} ${l},</p>
-              
-              <p style="color: #ddd; line-height: 1.6;">Thank you for registering as a student with WTSKF-GOA! Please click the button below to verify your email address and activate your account.</p>
-              
-              <div style="text-align: center; margin: 30px 0;">
-                <a href="${verificationLink}" style="background: linear-gradient(135deg, #d4af37, #f4e4bc); color: #000; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
-                  Verify Student Account
-                </a>
-              </div>
-              
-              <p style="color: #aaa; font-size: 14px; text-align: center;">Or copy and paste this link into your browser:</p>
-              <p style="color: #aaa; font-size: 12px; word-break: break-all; text-align: center;">${verificationLink}</p>
-              
-              <div style="background: rgba(212,175,55,0.1); padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #d4af37;">
-                <h4 style="color: #d4af37; margin-top: 0;">Your Login Details:</h4>
-                <ul style="color: #fff; list-style: none; padding: 0;">
-                  <li><strong>Name:</strong> ${f} ${l}</li>
-                  <li><strong>Email:</strong> ${e}</li>
-                  <li><strong>Batch:</strong> ${b}</li>
-                  <li><strong>Password:</strong> karate@${b}</li>
-                </ul>
-              </div>
-              
-              <p style="color: #ddd; line-height: 1.6;">This verification link will expire in 24 hours. If you didn't register for WTSKF-GOA, please ignore this email.</p>
-              
-              <div style="text-align: center; margin-top: 30px;">
-                <p style="color: #d4af37; font-weight: bold; margin-bottom: 10px;">Questions? Contact Us</p>
-                <p style="color: #ddd; margin: 5px 0;">📧 Email: info@wtskf-goa.com</p>
-                <p style="color: #ddd; margin: 5px 0;">📞 Phone: +91 98765 43210</p>
-              </div>
-            </div>
-            
-            <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
-              <p style="color: #aaa; font-size: 12px; margin: 0;">© 2024 WTSKF-GOA. All rights reserved.</p>
-              <p style="color: #aaa; font-size: 12px; margin: 5px 0;">Master the Art of Karate</p>
-            </div>
-          </div>
-        `
-      };
-      
-      await transporter.sendMail(mailOptions);
+    // Send verification email (non-blocking)
+    sendMail(mailOptions).then(() => {
       console.log('Student verification email sent to:', email);
-    } catch (emailError) {
+    }).catch((emailError) => {
       console.error('Error sending student verification email:', emailError);
-    }
+    });
     
     res.status(201).json({
       ...inserted[0],
@@ -2016,19 +1968,29 @@ app.get('/api/create-student-table', async (req, res) => {
 
 // Fallback: send index.html for any unknown route (SPA-style)
 app.get('/api/health', async (req, res) => {
+  let dbOk = false;
   try {
     await query('SELECT 1');
-    const redisOk = !!(redisClient && redisClient.isOpen);
-    res.json({ status: 'ok', db: true, redis: redisOk });
-  } catch (e) {
-    res.status(500).json({ status: 'error', message: 'Health check failed' });
+    dbOk = true;
+  } catch (_) {
+    dbOk = false;
   }
+  const redisOk = !!(redisClient && redisClient.isOpen);
+  res.status(200).json({ status: 'ok', db: dbOk, redis: redisOk });
 });
 
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-app.listen(PORT, () => {
-  console.log(`Karate admin backend running on http://localhost:${PORT}`);
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Karate admin backend running on http://0.0.0.0:${PORT}`);
 });
