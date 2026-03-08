@@ -4888,19 +4888,24 @@
                 loadHomeCourses();
 
                 // Mobile navigation toggle
-                var hamburger = document.getElementById('hamburger');
-                var navLinksEl = document.getElementById('navLinks');
-                var overlayEl = document.getElementById('overlay');
-                if (hamburger && navLinksEl && overlayEl) {
-                    hamburger.addEventListener('click', function () {
-                        navLinksEl.classList.toggle('active');
-                        overlayEl.classList.toggle('active');
-                    });
-                    overlayEl.addEventListener('click', function () {
-                        navLinksEl.classList.remove('active');
-                        overlayEl.classList.remove('active');
-                    });
-                }
+               // Mobile menu toggle
+        document.getElementById('hamburger').addEventListener('click', function() {
+            document.getElementById('navLinks').classList.toggle('active');
+            document.getElementById('overlay').classList.toggle('active');
+        });
+
+        document.getElementById('overlay').addEventListener('click', function() {
+            document.getElementById('navLinks').classList.remove('active');
+            document.getElementById('overlay').classList.remove('active');
+        });
+
+        // Close mobile menu when clicking nav links
+        document.querySelectorAll('#navLinks a').forEach(link => {
+            link.addEventListener('click', function() {
+                document.getElementById('navLinks').classList.remove('active');
+                document.getElementById('overlay').classList.remove('active');
+            });
+        });
 
                 // Login form -> authenticate with API
                 var loginForm = document.getElementById('loginForm');
