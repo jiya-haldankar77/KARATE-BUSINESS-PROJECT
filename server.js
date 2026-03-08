@@ -278,19 +278,13 @@ const transporter = (nodemailer && EMAIL_USER && EMAIL_PASS)
       host: 'smtp.gmail.com',
       port: SMTP_PORT,
       secure: SMTP_PORT === 465,
-      requireTLS: SMTP_PORT === 587,
       auth: {
         user: EMAIL_USER,
         pass: EMAIL_PASS
       },
-      pool: true,
-      maxConnections: 3,
-      maxMessages: 50,
-      connectionTimeout: 60000,
-      greetingTimeout: 60000,
-      socketTimeout: 60000,
-      family: 4,
-      tls: { minVersion: 'TLSv1.2', servername: 'smtp.gmail.com' }
+      tls: {
+        rejectUnauthorized: false
+      }
     })
   : null;
 
@@ -1827,12 +1821,6 @@ app.post('/api/student-register', async (req, res) => {
       return res.status(400).json({ message: 'All fields are required' });
     }
     
-    // Check if student already exists
-    const existingStudents = await query('SELECT * FROM student_registrations WHERE email = ?', [e]);
-    if (existingStudents.length > 0) {
-      return res.status(400).json({ message: 'Student with this email already exists' });
-    }
-    
     // Generate verification token
     const verificationToken = uuidv4();
     
@@ -1845,8 +1833,31 @@ app.post('/api/student-register', async (req, res) => {
     const inserted = await query('SELECT * FROM student_registrations WHERE id = ?', [result.insertId]);
     
     // Send verification email (non-blocking)
+    const verificationLink = `${req.protocol}://${req.get('host')}/verify-student-email?token=${verificationToken}&email=${encodeURIComponent(e)}`;
+    const mailOptions = {
+      to: e,
+      from: EMAIL_USER,
+      subject: 'Verify your Student Account - WTSKF-GOA',
+      html: `
+        <html>
+        <body>
+          <h2>Verify Your Student Account</h2>
+          <p>Hi ${f} ${l},</p>
+          <p>Thank you for registering with WTSKF-GOA!</p>
+          <p>Your login details:</p>
+          <ul>
+            <li>Email: ${e}</li>
+            <li>Password: karate@${b}</li>
+          </ul>
+          <p>Click here to verify your account: <a href="${verificationLink}">Verify Account</a></p>
+          <p>This link expires in 24 hours.</p>
+          <p>If you didn't register, ignore this email.</p>
+        </body>
+        </html>
+      `
+    };
     sendMail(mailOptions).then(() => {
-      console.log('Student verification email sent to:', email);
+      console.log('Student verification email sent to:', e);
     }).catch((emailError) => {
       console.error('Error sending student verification email:', emailError);
     });
