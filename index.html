@@ -2192,6 +2192,10 @@
                     <a href="#" class="menu-item" onclick="showAdminView('admin-announcements', this)">
                         <i class="fas fa-bullhorn"></i> Announcements
                     </a>
+
+                    <a href="#" class="menu-item" onclick="showAdminView('admin-achievements-media', this)">
+                        <i class="fas fa-images"></i> Achievements Media
+                    </a>
                                         
                     <p class="menu-title">Registrations</p>
                     <a href="#" class="menu-item" onclick="showAdminView('admin-tournament-registrations', this)">
@@ -2396,6 +2400,37 @@
                         </h3>
                         <ul class="activity-list" id="admin-announcements-list"></ul>
                     </div>
+                </div>
+
+                <div class="admin-view" id="admin-achievements-media">
+                    <div class="section-header">
+                        <h2 class="section-title"><i class="fas fa-images"></i> Achievements Media</h2>
+                    </div>
+
+                    <div class="info-card" style="margin-bottom: 1.5rem;">
+                        <h3 style="margin-bottom: 0.75rem;">Upload Photo / Video</h3>
+                        <div class="form-row">
+                            <div class="form-group half">
+                                <label for="achievementMediaTitle">Title (optional)</label>
+                                <input type="text" id="achievementMediaTitle" class="form-control" placeholder="e.g. Tournament 2025">
+                            </div>
+                            <div class="form-group half">
+                                <label for="achievementMediaFile">File</label>
+                                <input type="file" id="achievementMediaFile" class="form-control" accept="image/*,video/*">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="achievementMediaDescription">Description (optional)</label>
+                            <input type="text" id="achievementMediaDescription" class="form-control" placeholder="Short description">
+                        </div>
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-primary" onclick="uploadAchievementMedia()">Upload</button>
+                            <button type="button" class="btn btn-outline" onclick="loadAchievementMedia()">Refresh</button>
+                        </div>
+                        <div id="achievementMediaStatus" class="text-muted" style="margin-top: 0.75rem;"></div>
+                    </div>
+
+                    <div class="info-grid" id="admin-achievements-media-list"></div>
                 </div>
 
                 
@@ -3478,7 +3513,122 @@
                                 if (viewId === 'admin-tournament-registrations') loadTournamentRegistrations();
                 if (viewId === 'admin-exam-registrations') loadExamRegistrations();
                 if (viewId === 'admin-store-orders') loadStoreOrders();
+                if (viewId === 'admin-achievements-media') loadAchievementMedia();
             };
+
+            async function loadAchievementMedia() {
+                var list = document.getElementById('admin-achievements-media-list');
+                var status = document.getElementById('achievementMediaStatus');
+                if (status) status.textContent = 'Loading...';
+                if (list) list.innerHTML = '';
+                try {
+                    const resp = await fetch('/api/achievements/media');
+                    const items = await resp.json();
+                    if (!Array.isArray(items) || !list) {
+                        if (status) status.textContent = '';
+                        return;
+                    }
+
+                    items.forEach(function (item) {
+                        var card = document.createElement('div');
+                        card.className = 'info-card';
+                        var title = (item && item.title) ? item.title : ((item && item.type === 'video') ? 'Video' : 'Photo');
+                        var desc = (item && item.description) ? item.description : '';
+                        var mediaHtml = '';
+                        if (item && item.type === 'video') {
+                            mediaHtml = '<video src="' + item.url + '" controls style="width:100%; border-radius:12px;"></video>';
+                        } else {
+                            mediaHtml = '<img src="' + item.url + '" alt="" style="width:100%; border-radius:12px; object-fit:cover;">';
+                        }
+                        card.innerHTML =
+                            mediaHtml +
+                            '<h3 style="margin-top: 0.75rem;">' + title + '</h3>' +
+                            (desc ? ('<p>' + desc + '</p>') : '') +
+                            '<div class="form-actions" style="margin-top: 1rem;">' +
+                                '<button class="btn btn-primary" type="button" onclick="deleteAchievementMedia(\'' + item.id + '\')">Delete</button>' +
+                            '</div>';
+                        list.appendChild(card);
+                    });
+
+                    if (status) status.textContent = items.length ? '' : 'No media uploaded yet.';
+                } catch (e) {
+                    console.error('loadAchievementMedia error', e);
+                    if (status) status.textContent = 'Failed to load media.';
+                }
+            }
+
+            async function uploadAchievementMedia() {
+                var fileInput = document.getElementById('achievementMediaFile');
+                var titleInput = document.getElementById('achievementMediaTitle');
+                var descInput = document.getElementById('achievementMediaDescription');
+                var status = document.getElementById('achievementMediaStatus');
+
+                if (!fileInput || !fileInput.files || !fileInput.files[0]) {
+                    if (status) status.textContent = 'Please choose a file.';
+                    return;
+                }
+
+                try {
+                    if (status) status.textContent = 'Uploading...';
+                    const token = localStorage.getItem('authToken');
+                    if (!token) {
+                        if (status) status.textContent = 'Please login again.';
+                        return;
+                    }
+
+                    const fd = new FormData();
+                    fd.append('file', fileInput.files[0]);
+                    fd.append('title', (titleInput && titleInput.value) ? titleInput.value : '');
+                    fd.append('description', (descInput && descInput.value) ? descInput.value : '');
+
+                    const resp = await fetch('/api/achievements/media', {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + token },
+                        body: fd
+                    });
+
+                    const data = await resp.json().catch(function () { return {}; });
+                    if (!resp.ok) {
+                        if (status) status.textContent = (data && data.message) ? data.message : 'Upload failed.';
+                        return;
+                    }
+
+                    if (status) status.textContent = 'Uploaded.';
+                    fileInput.value = '';
+                    if (titleInput) titleInput.value = '';
+                    if (descInput) descInput.value = '';
+                    await loadAchievementMedia();
+                } catch (e) {
+                    console.error('uploadAchievementMedia error', e);
+                    if (status) status.textContent = 'Upload failed.';
+                }
+            }
+
+            async function deleteAchievementMedia(id) {
+                var status = document.getElementById('achievementMediaStatus');
+                try {
+                    const token = localStorage.getItem('authToken');
+                    if (!token) {
+                        if (status) status.textContent = 'Please login again.';
+                        return;
+                    }
+                    if (status) status.textContent = 'Deleting...';
+                    const resp = await fetch('/api/achievements/media/' + encodeURIComponent(id), {
+                        method: 'DELETE',
+                        headers: { 'Authorization': 'Bearer ' + token }
+                    });
+                    const data = await resp.json().catch(function () { return {}; });
+                    if (!resp.ok) {
+                        if (status) status.textContent = (data && data.message) ? data.message : 'Delete failed.';
+                        return;
+                    }
+                    if (status) status.textContent = 'Deleted.';
+                    await loadAchievementMedia();
+                } catch (e) {
+                    console.error('deleteAchievementMedia error', e);
+                    if (status) status.textContent = 'Delete failed.';
+                }
+            }
 
             window.showStudentView = function (viewId, el) {
                 var views = document.querySelectorAll('#student-dashboard .student-view');

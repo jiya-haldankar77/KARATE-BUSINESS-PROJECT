@@ -530,10 +530,36 @@
         let currentImageIndex = 0;
         let currentView = 'gallery';
 
+        async function loadUploadedMedia() {
+            try {
+                const resp = await fetch('/api/achievements/media');
+                if (!resp.ok) return;
+                const items = await resp.json();
+                if (!Array.isArray(items)) return;
+
+                items.forEach(function (item) {
+                    if (!item || !item.url) return;
+                    if (item.type === 'video') {
+                        galleryVideos.unshift({
+                            src: item.url,
+                            title: item.title || 'Video',
+                            description: item.description || ''
+                        });
+                    } else {
+                        galleryImages.unshift(item.url);
+                    }
+                });
+            } catch (e) {
+                console.error('Failed to load uploaded achievements media', e);
+            }
+        }
+
         // Initialize Gallery
         document.addEventListener('DOMContentLoaded', function() {
-            loadGallery();
-            loadVideos();
+            loadUploadedMedia().finally(function () {
+                loadGallery();
+                loadVideos();
+            });
         });
 
         // Load Gallery Images

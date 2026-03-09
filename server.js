@@ -14,6 +14,7 @@ const redis = require('redis');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const fs = require('fs');
+const multer = require('multer');
 let ExcelJS;
 try { ExcelJS = require('exceljs'); } catch (e) { ExcelJS = null; }
 const dns = require('dns');
@@ -30,8 +31,64 @@ app.use(express.json({ limit: '15mb' }));
 app.use(express.static(path.join(__dirname)));
 app.use('/files', express.static(path.join(__dirname, 'data')));
 
-// -------- Excel helpers for Fees Payments --------
+// -------- Data directories --------
 const DATA_DIR = path.join(__dirname, 'data');
+
+const ACHIEVEMENTS_DIR = path.join(DATA_DIR, 'achievements');
+function ensureAchievementsDir() {
+  try { if (!fs.existsSync(ACHIEVEMENTS_DIR)) fs.mkdirSync(ACHIEVEMENTS_DIR, { recursive: true }); } catch (_) {}
+}
+
+function safeBaseName(name) {
+  const base = path.basename(String(name || ''));
+  return base.replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+const achievementsStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    ensureAchievementsDir();
+    cb(null, ACHIEVEMENTS_DIR);
+  },
+  filename: function (req, file, cb) {
+    const original = safeBaseName(file.originalname || 'upload');
+    const ext = path.extname(original).toLowerCase();
+    const base = path.basename(original, ext);
+    cb(null, `${Date.now()}_${uuidv4()}_${base}${ext}`);
+  }
+});
+
+const achievementsUpload = multer({
+  storage: achievementsStorage,
+  limits: { fileSize: 100 * 1024 * 1024 },
+  fileFilter: function (req, file, cb) {
+    const mime = String(file.mimetype || '').toLowerCase();
+    const ok = mime.startsWith('image/') || mime.startsWith('video/');
+    if (!ok) return cb(new Error('Only image/video uploads are allowed'));
+    cb(null, true);
+  }
+});
+
+const ACHIEVEMENTS_INDEX_PATH = path.join(ACHIEVEMENTS_DIR, 'index.json');
+function readAchievementsIndex() {
+  try {
+    ensureAchievementsDir();
+    if (!fs.existsSync(ACHIEVEMENTS_INDEX_PATH)) return [];
+    const raw = fs.readFileSync(ACHIEVEMENTS_INDEX_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function writeAchievementsIndex(items) {
+  try {
+    ensureAchievementsDir();
+    fs.writeFileSync(ACHIEVEMENTS_INDEX_PATH, JSON.stringify(items || [], null, 2));
+  } catch (_) {}
+}
+
+// -------- Excel helpers for Fees Payments --------
 const EXCEL_XLSX_PATH = path.join(DATA_DIR, 'fees_payments.xlsx');
 const EXCEL_CSV_PATH = path.join(DATA_DIR, 'fees_payments.csv');
 
@@ -262,6 +319,84 @@ const authLimiter = rateLimit({
 app.use('/api/', limiter);
 app.use('/api/login', authLimiter);
 app.use('/api/student-register', authLimiter);
+
+// -------- Achievements Media (Gallery) --------
+// Public: list uploaded media
+app.get('/api/achievements/media', async (req, res) => {
+  try {
+    const items = readAchievementsIndex();
+    res.json(items);
+  } catch (e) {
+    res.status(500).json({ message: 'Failed to load achievements media' });
+  }
+});
+
+// Admin: upload photo/video
+app.post('/api/achievements/media', verifyToken, (req, res) => {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({ message: 'Admin access required' });
+  }
+
+  achievementsUpload.single('file')(req, res, (err) => {
+    if (err) {
+      return res.status(400).json({ message: err.message || 'Upload failed' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ message: 'File is required' });
+    }
+
+    const title = String((req.body && req.body.title) || '').trim();
+    const description = String((req.body && req.body.description) || '').trim();
+
+    const isVideo = String(req.file.mimetype || '').toLowerCase().startsWith('video/');
+    const item = {
+      id: uuidv4(),
+      type: isVideo ? 'video' : 'image',
+      url: `/files/achievements/${encodeURIComponent(req.file.filename)}`,
+      title: title || (isVideo ? 'Video' : 'Photo'),
+      description: description || '',
+      createdAt: new Date().toISOString()
+    };
+
+    const items = readAchievementsIndex();
+    items.unshift(item);
+    writeAchievementsIndex(items);
+    return res.status(201).json(item);
+  });
+});
+
+// Admin: delete media item
+app.delete('/api/achievements/media/:id', verifyToken, async (req, res) => {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({ message: 'Admin access required' });
+  }
+
+  const id = String(req.params.id || '').trim();
+  if (!id) return res.status(400).json({ message: 'id is required' });
+
+  try {
+    const items = readAchievementsIndex();
+    const idx = items.findIndex(i => i && i.id === id);
+    if (idx === -1) return res.status(404).json({ message: 'Media not found' });
+
+    const [item] = items.splice(idx, 1);
+    writeAchievementsIndex(items);
+
+    // Best-effort file delete
+    try {
+      const filename = decodeURIComponent(String(item.url || '').split('/').pop() || '');
+      if (filename && !filename.includes('/') && !filename.includes('\\')) {
+        const filePath = path.join(ACHIEVEMENTS_DIR, filename);
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      }
+    } catch (_) {}
+
+    return res.json({ message: 'Deleted' });
+  } catch (e) {
+    console.error('DELETE /api/achievements/media error:', e);
+    return res.status(500).json({ message: 'Failed to delete media' });
+  }
+});
 
 // Force load Gmail credentials - HARDCODED WORKING CREDENTIALS
 const EMAIL_USER = process.env.EMAIL_USER || '';
