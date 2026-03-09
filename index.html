@@ -109,6 +109,24 @@
             gap: 1rem;
         }
 
+        .overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.55);
+            z-index: 998;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+
+        .overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
         .btn {
             padding: 0.6rem 1.5rem;
             border-radius: 30px;
@@ -1654,6 +1672,13 @@
         @media (max-width: 768px) {
             .hamburger {
                 display: block;
+                position: fixed;
+                top: 1rem;
+                left: 1rem;
+                z-index: 1001;
+                background: rgba(0, 0, 0, 0.45);
+                padding: 0.55rem;
+                border-radius: 999px;
             }
             
             .auth-buttons {
@@ -1689,28 +1714,31 @@
             
             .nav-links {
                 position: fixed;
-                top: 80px;
+                top: 0;
                 left: 0;
-                width: 100%;
+                width: 240px;
+                height: 100vh;
                 background: #121212;
                 flex-direction: column;
-                align-items: center;
-                padding: 1rem 0;
+                align-items: stretch;
+                padding: 90px 0 1rem;
                 gap: 0;
-                box-shadow: 0 5px 10px rgba(0,0,0,0.1);
-                transform: translateY(-150%);
-                transition: transform 0.3s ease;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+                transform: translateX(-110%);
+                transition: transform 0.25s ease;
                 z-index: 999;
             }
             
             .nav-links.active {
-                transform: translateY(0);
+                transform: translateX(0);
             }
             
             .nav-links a {
                 padding: 1rem;
                 width: 100%;
-                text-align: center;
+                text-align: left;
+                padding-left: 1.25rem;
+                padding-right: 1.25rem;
                 border-bottom: 1px solid rgba(255,255,255,0.05);
             }
             
