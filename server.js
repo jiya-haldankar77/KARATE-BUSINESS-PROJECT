@@ -2232,7 +2232,7 @@ app.post('/api/student-register', async (req, res) => {
     
     const inserted = await query('SELECT * FROM student_registrations WHERE id = ?', [studentId]);
     
-    // Send verification email (blocking - wait for result)
+    // Send verification email (non-blocking with timeout)
     const verificationLink = `${req.protocol}://${req.get('host')}/verify-student-email?token=${verificationToken}&email=${encodeURIComponent(e)}`;
     const mailOptions = {
       to: e,
@@ -2252,24 +2252,20 @@ app.post('/api/student-register', async (req, res) => {
       `
     };
     
-    let emailSent = false;
-    let emailError = null;
-    try {
-      await sendMail(mailOptions);
-      emailSent = true;
-      console.log('✅ Student verification email SENT to:', e);
-    } catch (err) {
-      emailError = err.message;
-      console.error('❌ Failed to send email to:', e, '- Error:', err.message);
-    }
+    // Send email in background with timeout - don't block registration
+    const emailPromise = sendMail(mailOptions);
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('Email timeout')), 5000)
+    );
     
+    Promise.race([emailPromise, timeoutPromise])
+      .then(() => console.log('✅ Email sent to:', e))
+      .catch(err => console.error('❌ Email failed:', err.message));
+    
+    // Return success immediately - don't wait for email
     res.status(201).json({
       ...inserted[0],
-      emailSent: emailSent,
-      emailError: emailError,
-      message: emailSent 
-        ? 'Registration successful! Please check your email to verify your account.'
-        : 'Registration saved but email failed to send. Please contact support.'
+      message: 'Registration successful! Please check your email to verify your account.'
     });
   } catch (err) {
     console.error('POST /api/student-register error:', err.message);
