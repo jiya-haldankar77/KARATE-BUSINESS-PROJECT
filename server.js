@@ -2232,7 +2232,7 @@ app.post('/api/student-register', async (req, res) => {
     
     const inserted = await query('SELECT * FROM student_registrations WHERE id = ?', [studentId]);
     
-    // Send verification email (non-blocking)
+    // Send verification email (blocking - wait for result)
     const verificationLink = `${req.protocol}://${req.get('host')}/verify-student-email?token=${verificationToken}&email=${encodeURIComponent(e)}`;
     const mailOptions = {
       to: e,
@@ -2240,31 +2240,36 @@ app.post('/api/student-register', async (req, res) => {
       subject: 'Verify your Student Account - WTSKF-GOA',
       html: `
         <html>
-        <body>
-          <h2>Verify Your Student Account</h2>
-          <p>Hi ${f} ${l},</p>
-          <p>Thank you for registering with WTSKF-GOA!</p>
-          <p>Your login details:</p>
-          <ul>
-            <li>Email: ${e}</li>
-            <li>Password: karate@${b}</li>
-          </ul>
-          <p>Click here to verify your account: <a href="${verificationLink}">Verify Account</a></p>
-          <p>This link expires in 24 hours.</p>
-          <p>If you didn't register, ignore this email.</p>
+        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h2>Welcome to WTSKF-GOA Karate!</h2>
+          <p>Hello ${f} ${l},</p>
+          <p>Thank you for registering. Please verify your email by clicking the link below:</p>
+          <p><a href="${verificationLink}" style="padding: 10px 20px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px;">Verify Email</a></p>
+          <p>Or copy this link: ${verificationLink}</p>
+          <p>Your login details will be sent after verification.</p>
         </body>
         </html>
       `
     };
-    sendMail(mailOptions).then(() => {
-      console.log('Student verification email sent to:', e);
-    }).catch((emailError) => {
-      console.error('Error sending student verification email:', emailError);
-    });
+    
+    let emailSent = false;
+    let emailError = null;
+    try {
+      await sendMail(mailOptions);
+      emailSent = true;
+      console.log('✅ Student verification email SENT to:', e);
+    } catch (err) {
+      emailError = err.message;
+      console.error('❌ Failed to send email to:', e, '- Error:', err.message);
+    }
     
     res.status(201).json({
       ...inserted[0],
-      message: 'Registration successful! Please check your email to verify your account.'
+      emailSent: emailSent,
+      emailError: emailError,
+      message: emailSent 
+        ? 'Registration successful! Please check your email to verify your account.'
+        : 'Registration saved but email failed to send. Please contact support.'
     });
   } catch (err) {
     console.error('POST /api/student-register error:', err.message);
