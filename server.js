@@ -2331,23 +2331,64 @@ app.post('/api/resend-student-verification', async (req, res) => {
   }
 });
 
-// Test email endpoint
+// Test email endpoint - auto sends to test address
 app.post('/api/test-email', async (req, res) => {
-  const { to } = req.body;
-  if (!to) return res.status(400).json({ message: 'To email required' });
-
+  const testEmail = req.body.to || 'jiyahaldnakar777@gmail.com';
+  
+  console.log('🧪 TEST EMAIL: Sending to', testEmail);
+  console.log('🧪 EMAIL_USER:', EMAIL_USER);
+  console.log('🧪 Gmail transporter exists:', !!gmailTransporter);
+  
   const mailOptions = {
-    to,
+    to: testEmail,
     from: EMAIL_USER,
-    subject: 'Test Email from Karate Admin',
-    html: `<p>This is a test email sent at ${new Date().toISOString()}</p>`
+    subject: 'URGENT TEST - WTSKF-GOA Registration',
+    html: `
+      <div style="font-family: Arial, sans-serif; padding: 20px; background: #1a1a1a; color: #fff;">
+        <h2 style="color: #d4af37;">TEST EMAIL - PLEASE IGNORE</h2>
+        <p>This is a test email sent at: ${new Date().toISOString()}</p>
+        <p>If you received this, the email system is working!</p>
+        <hr>
+        <p>System Info:</p>
+        <ul>
+          <li>Server: karate-admin-backend.onrender.com</li>
+          <li>Time: ${new Date().toLocaleString()}</li>
+          <li>From: ${EMAIL_USER}</li>
+          <li>To: ${testEmail}</li>
+        </ul>
+      </div>
+    `
   };
 
   try {
-    const info = await sendMail(mailOptions);
-    res.json({ message: 'Test email sent', info });
+    if (!gmailTransporter) {
+      throw new Error('Gmail transporter not configured - check EMAIL_USER and EMAIL_PASS');
+    }
+    
+    console.log('🧪 Using Gmail SMTP to send...');
+    const info = await gmailTransporter.sendMail({
+      from: `"WTSKF-GOA Test" <${EMAIL_USER}>`,
+      to: testEmail,
+      subject: 'URGENT TEST - WTSKF-GOA Registration System',
+      html: mailOptions.html
+    });
+    
+    console.log('🧪 TEST EMAIL SENT SUCCESS:', info);
+    res.json({ 
+      success: true, 
+      message: 'Test email sent successfully', 
+      messageId: info.messageId,
+      to: testEmail,
+      from: EMAIL_USER
+    });
   } catch (err) {
-    res.status(500).json({ message: 'Failed to send test email', error: err.message });
+    console.error('🧪 TEST EMAIL FAILED:', err);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to send test email', 
+      error: err.message,
+      details: err.toString()
+    });
   }
 });
 
