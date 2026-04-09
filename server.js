@@ -404,7 +404,7 @@ app.delete('/api/achievements/media/:id', verifyToken, async (req, res) => {
 
 // Force load Gmail credentials - HARDCODED WORKING CREDENTIALS
 const EMAIL_USER = process.env.EMAIL_USER || '';
-const EMAIL_PASS = process.env.EMAIL_PASS || '';
+const EMAIL_PASS = (process.env.EMAIL_PASS || '').replace(/\s/g, '');
 
 console.log('📧 Email configuration:');
 console.log('EMAIL_USER:', EMAIL_USER);
@@ -473,6 +473,7 @@ async function sendMail(mailOptions) {
       return;
     } catch (e) {
       console.error('❌ Gmail SMTP send error:', e.message);
+      console.error('Full error:', e);
       // Continue to fallback
     }
   }
