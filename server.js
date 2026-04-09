@@ -8,6 +8,8 @@ let brevo;
 try { brevo = require('sib-api-v3-sdk'); } catch (e) { brevo = null; }
 let sgMail;
 try { sgMail = require('@sendgrid/mail'); } catch (e) { sgMail = null; }
+let nodemailer;
+try { nodemailer = require('nodemailer'); } catch (e) { nodemailer = null; }
 const { v4: uuidv4 } = require('uuid');
 const rateLimit = require('express-rate-limit');
 const redis = require('redis');
@@ -19,6 +21,8 @@ let ExcelJS;
 try { ExcelJS = require('exceljs'); } catch (e) { ExcelJS = null; }
 const dns = require('dns');
 try { dns.setDefaultResultOrder('ipv4first'); } catch (_) {}
+let sqlite3;
+try { sqlite3 = require('sqlite3'); } catch (e) { sqlite3 = null; }
 
 const app = express();
 app.set('trust proxy', 1);
@@ -406,10 +410,44 @@ console.log('📧 Email configuration:');
 console.log('EMAIL_USER:', EMAIL_USER);
 console.log('EMAIL_PASS configured:', !!EMAIL_PASS);
 
-// Brevo configuration
+// Brevo configuration (SMTP preferred over API)
 const BREVO_API_KEY = process.env.BREVO_API_KEY || '';
+const BREVO_SMTP_KEY = process.env.BREVO_SMTP_KEY || '';
+const BREVO_SMTP_USER = process.env.BREVO_SMTP_USER || 'karatesubhash455@gmail.com';
+
+// Configure Brevo API client (fallback)
 if (brevo && BREVO_API_KEY) {
   brevo.ApiClient.instance.authentications['api-key'].apiKey = BREVO_API_KEY;
+}
+
+// Configure Brevo SMTP transporter (primary)
+let brevoTransporter = null;
+if (nodemailer && BREVO_SMTP_KEY) {
+  brevoTransporter = nodemailer.createTransport({
+    host: 'smtp-relay.brevo.com',
+    port: 587,
+    secure: false,
+    auth: {
+      user: BREVO_SMTP_USER,
+      pass: BREVO_SMTP_KEY
+    }
+  });
+  console.log('✅ Brevo SMTP transporter configured');
+}
+
+// Configure Gmail SMTP transporter (alternative)
+let gmailTransporter = null;
+if (nodemailer && EMAIL_USER && EMAIL_PASS) {
+  gmailTransporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false,
+    auth: {
+      user: EMAIL_USER,
+      pass: EMAIL_PASS
+    }
+  });
+  console.log('✅ Gmail SMTP transporter configured');
 }
 
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || '';
@@ -419,36 +457,83 @@ if (SENDGRID_API_KEY) {
 
 async function sendMail(mailOptions) {
   console.log('Attempting to send email to:', mailOptions.to);
+  
+  // 1. Try Gmail SMTP (most reliable)
+  if (gmailTransporter) {
+    console.log('Using Gmail SMTP for email');
+    try {
+      const info = await gmailTransporter.sendMail({
+        from: `"WTSKF-GOA" <${EMAIL_USER}>`,
+        to: mailOptions.to,
+        subject: mailOptions.subject,
+        html: mailOptions.html,
+        text: mailOptions.text || 'Please view this email in an HTML-capable client.'
+      });
+      console.log('✅ Email sent successfully via Gmail SMTP to:', mailOptions.to, 'MessageId:', info.messageId);
+      return;
+    } catch (e) {
+      console.error('❌ Gmail SMTP send error:', e.message);
+      // Continue to fallback
+    }
+  }
+  
+  // 2. Try Brevo SMTP (fallback)
+  if (brevoTransporter) {
+    console.log('Using Brevo SMTP for email');
+    try {
+      const info = await brevoTransporter.sendMail({
+        from: `"WTSKF-GOA" <${mailOptions.from || EMAIL_USER || 'karatesubhash455@gmail.com'}>`,
+        to: mailOptions.to,
+        subject: mailOptions.subject,
+        html: mailOptions.html,
+        text: mailOptions.text || 'Please view this email in an HTML-capable client.'
+      });
+      console.log('✅ Email sent successfully via Brevo SMTP to:', mailOptions.to, 'MessageId:', info.messageId);
+      return;
+    } catch (e) {
+      console.error('❌ Brevo SMTP send error:', e.message);
+      // Continue to fallback
+    }
+  }
+  
+  // 3. Try Brevo API (fallback)
   if (brevo && BREVO_API_KEY) {
-    console.log('Using Brevo for email');
+    console.log('Using Brevo API for email');
     try {
       const apiInstance = new brevo.TransactionalEmailsApi();
       const sendSmtpEmail = {
-        sender: { email: mailOptions.from || EMAIL_USER, name: 'WTSKF-GOA' },
+        sender: { email: mailOptions.from || EMAIL_USER || 'karatesubhash455@gmail.com', name: 'WTSKF-GOA' },
         to: [{ email: mailOptions.to }],
         subject: mailOptions.subject,
         htmlContent: mailOptions.html
       };
       const result = await apiInstance.sendTransacEmail(sendSmtpEmail);
-      console.log('Email sent successfully via Brevo to:', mailOptions.to, 'MessageId:', result.messageId);
+      console.log('✅ Email sent successfully via Brevo API to:', mailOptions.to, 'MessageId:', result.messageId);
       return;
     } catch (e) {
-      console.error('Brevo send error:', e);
-      // Fallback to SendGrid
+      console.error('❌ Brevo API send error:', e);
+      // Continue to fallback
     }
   }
+  
+  // 3. Try SendGrid (fallback)
   if (SENDGRID_API_KEY && sgMail) {
     console.log('Using SendGrid for email');
     try {
       await sgMail.send(mailOptions);
-      console.log('Email sent successfully via SendGrid to:', mailOptions.to);
+      console.log('✅ Email sent successfully via SendGrid to:', mailOptions.to);
       return;
     } catch (e) {
-      console.error('SendGrid send error:', e);
+      console.error('❌ SendGrid send error:', e);
     }
   }
-  console.log('No email service available');
+  
+  console.log('❌ No email service available - email NOT sent to:', mailOptions.to);
 }
+
+// Database configuration
+let dbConnection = null;
+let dbType = 'mysql';
 
 // Create MySQL connection pool
 const pool = mysql.createPool({
@@ -528,13 +613,151 @@ async function initializeDatabase() {
         try { await client.query('DROP INDEX IF EXISTS uniq_admissions_phone'); } catch (_) {}
         try { await client.query('ALTER TABLE student_registrations DROP CONSTRAINT IF EXISTS student_registrations_email_key'); } catch (_) {}
         console.log('PostgreSQL schema ensured via schema_postgresql.sql');
+        return;
       } finally {
         client.release();
       }
     } catch (e) {
       console.error('PostgreSQL initialization error:', e.message);
+      console.log('⚠️ Falling back to SQLite database...');
+      // Continue to SQLite fallback below
     }
-    return;
+  }
+  
+  // SQLite fallback for PostgreSQL failures or when no DATABASE_URL
+  if ((module.exports.dbType === 'postgresql' && !dbConnection) || !process.env.DATABASE_URL) {
+    if (sqlite3) {
+      try {
+        const sqliteDbPath = path.join(DATA_DIR, 'karate.db');
+        dbConnection = new sqlite3.Database(sqliteDbPath);
+        module.exports.dbType = 'sqlite';
+        console.log('✅ SQLite database initialized at:', sqliteDbPath);
+        
+        // Create SQLite schema
+        await initializeSQLiteSchema();
+        return;
+      } catch (sqliteErr) {
+        console.error('SQLite initialization error:', sqliteErr.message);
+      }
+    }
+  }
+
+  async function initializeSQLiteSchema() {
+    const tables = [
+      `CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        role TEXT DEFAULT 'user',
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS batches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE NOT NULL,
+        description TEXT,
+        timing TEXT,
+        centre TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS instructors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        photo_url TEXT,
+        description TEXT,
+        belt_level TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS admissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        first_name TEXT NOT NULL,
+        last_name TEXT NOT NULL,
+        email TEXT,
+        phone TEXT,
+        age INTEGER,
+        belt_level TEXT,
+        address TEXT,
+        centre TEXT,
+        batch_timing TEXT,
+        photo_url TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS student_registrations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        first_name TEXT NOT NULL,
+        last_name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        phone TEXT NOT NULL,
+        batch TEXT NOT NULL,
+        email_verified INTEGER DEFAULT 0,
+        verification_token TEXT,
+        verification_sent_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS fees_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        full_name TEXT NOT NULL,
+        phone TEXT NOT NULL,
+        batch_name TEXT NOT NULL,
+        centre TEXT NOT NULL,
+        payment_datetime DATETIME NOT NULL,
+        status TEXT NOT NULL,
+        txn_id TEXT,
+        amount REAL,
+        img_hash TEXT,
+        screenshot_base64 TEXT,
+        validation_json TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`
+    ];
+
+    for (const sql of tables) {
+      await new Promise((resolve, reject) => {
+        dbConnection.run(sql, (err) => {
+          if (err) {
+            console.error('SQLite schema error:', err);
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
+      });
+    }
+
+    // Insert default batches
+    const defaultBatches = [
+      ['batch 1', 'Batch 1', '', ''],
+      ['batch 2', 'Batch 2', '', ''],
+      ['batch 3', 'Batch 3', '', ''],
+      ['batch 4', 'Batch 4', '', ''],
+      ['batch 5', 'Batch 5', '', ''],
+      ['batch 6', 'Batch 6', '', ''],
+      ['batch guirim', 'Batch Guirim', '', '']
+    ];
+
+    for (const [name, desc, timing, centre] of defaultBatches) {
+      await new Promise((resolve) => {
+        dbConnection.run(
+          `INSERT OR IGNORE INTO batches (name, description, timing, centre) VALUES (?, ?, ?, ?)`,
+          [name, desc, timing, centre],
+          () => resolve()
+        );
+      });
+    }
+
+    // Insert default admin user
+    await new Promise((resolve) => {
+      bcrypt.hash('admin123', 10).then(hashedPassword => {
+        dbConnection.run(
+          `INSERT OR IGNORE INTO users (username, email, password, role) VALUES (?, ?, ?, ?)`,
+          ['admin', 'admin@example.com', hashedPassword, 'admin'],
+          () => resolve()
+        );
+      });
+    });
+
+    console.log('✅ SQLite schema initialized');
   }
   const connection = await module.exports.pool.getConnection();
   try {
@@ -779,6 +1002,39 @@ async function query(sql, params) {
     } finally {
       client.release();
     }
+  } else if (module.exports.dbType === 'sqlite' && dbConnection) {
+    // SQLite handling
+    return new Promise((resolve, reject) => {
+      const lowered = sql.trim().toLowerCase();
+      if (lowered.startsWith('select')) {
+        dbConnection.all(sql, params || [], (err, rows) => {
+          if (err) {
+            console.error('SQLite error:', err);
+            reject(err);
+          } else {
+            resolve(rows || []);
+          }
+        });
+      } else if (lowered.startsWith('insert')) {
+        dbConnection.run(sql, params || [], function(err) {
+          if (err) {
+            console.error('SQLite error:', err);
+            reject(err);
+          } else {
+            resolve({ insertId: this.lastID, affectedRows: this.changes });
+          }
+        });
+      } else {
+        dbConnection.run(sql, params || [], function(err) {
+          if (err) {
+            console.error('SQLite error:', err);
+            reject(err);
+          } else {
+            resolve({ affectedRows: this.changes });
+          }
+        });
+      }
+    });
   } else {
     const connection = await module.exports.pool.getConnection();
     try {
@@ -1908,6 +2164,21 @@ function verifyToken(req, res, next) {
   }
 }
 
+// Temporary endpoint to delete student registration (for testing)
+app.post('/api/delete-student-registration', async (req, res) => {
+  try {
+    const { email } = req.body;
+    const e = String(email || '').trim().toLowerCase();
+    if (!e) return res.status(400).json({ message: 'Email required' });
+    
+    await query('DELETE FROM student_registrations WHERE email = ?', [e]);
+    res.json({ message: 'Registration deleted for: ' + e });
+  } catch (err) {
+    console.error('Delete error:', err);
+    res.status(500).json({ message: 'Error deleting registration' });
+  }
+});
+
 // -------- Student Registration --------
 app.post('/api/student-register', async (req, res) => {
   try {
@@ -1925,13 +2196,31 @@ app.post('/api/student-register', async (req, res) => {
     // Generate verification token
     const verificationToken = uuidv4();
     
-    // Insert student registration
-    const result = await query(
-      'INSERT INTO student_registrations (first_name, last_name, email, phone, batch, email_verified, verification_token, verification_sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())',
-      [f, l, e, p, b, false, verificationToken]
-    );
+    // Check if email already exists
+    const existing = await query('SELECT * FROM student_registrations WHERE email = ?', [e]);
     
-    const inserted = await query('SELECT * FROM student_registrations WHERE id = ?', [result.insertId]);
+    let studentId;
+    if (existing.length > 0) {
+      const existingStudent = existing[0];
+      if (existingStudent.email_verified) {
+        return res.status(409).json({ message: 'Email already registered. Please login instead.' });
+      }
+      // Update existing unverified record
+      await query(
+        'UPDATE student_registrations SET first_name = ?, last_name = ?, phone = ?, batch = ?, verification_token = ?, verification_sent_at = NOW() WHERE id = ?',
+        [f, l, p, b, verificationToken, existingStudent.id]
+      );
+      studentId = existingStudent.id;
+    } else {
+      // Insert new student registration
+      const result = await query(
+        'INSERT INTO student_registrations (first_name, last_name, email, phone, batch, email_verified, verification_token, verification_sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())',
+        [f, l, e, p, b, false, verificationToken]
+      );
+      studentId = result.insertId;
+    }
+    
+    const inserted = await query('SELECT * FROM student_registrations WHERE id = ?', [studentId]);
     
     // Send verification email (non-blocking)
     const verificationLink = `${req.protocol}://${req.get('host')}/verify-student-email?token=${verificationToken}&email=${encodeURIComponent(e)}`;
