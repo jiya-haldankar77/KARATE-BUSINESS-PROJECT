@@ -2212,14 +2212,18 @@ app.post('/api/student-register', async (req, res) => {
       }
       // Update existing unverified record
       await query(
-        'UPDATE student_registrations SET first_name = ?, last_name = ?, phone = ?, batch = ?, verification_token = ?, verification_sent_at = NOW() WHERE id = ?',
+        module.exports.dbType === 'sqlite' 
+          ? 'UPDATE student_registrations SET first_name = ?, last_name = ?, phone = ?, batch = ?, verification_token = ?, verification_sent_at = datetime("now") WHERE id = ?'
+          : 'UPDATE student_registrations SET first_name = ?, last_name = ?, phone = ?, batch = ?, verification_token = ?, verification_sent_at = NOW() WHERE id = ?',
         [f, l, p, b, verificationToken, existingStudent.id]
       );
       studentId = existingStudent.id;
     } else {
       // Insert new student registration
       const result = await query(
-        'INSERT INTO student_registrations (first_name, last_name, email, phone, batch, email_verified, verification_token, verification_sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())',
+        module.exports.dbType === 'sqlite'
+          ? 'INSERT INTO student_registrations (first_name, last_name, email, phone, batch, email_verified, verification_token, verification_sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime("now"))'
+          : 'INSERT INTO student_registrations (first_name, last_name, email, phone, batch, email_verified, verification_token, verification_sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())',
         [f, l, e, p, b, false, verificationToken]
       );
       studentId = result.insertId;
@@ -2262,8 +2266,9 @@ app.post('/api/student-register', async (req, res) => {
       message: 'Registration successful! Please check your email to verify your account.'
     });
   } catch (err) {
-    console.error('POST /api/student-register error:', err);
-    res.status(500).json({ message: 'Error creating student registration' });
+    console.error('POST /api/student-register error:', err.message);
+    console.error('Stack:', err.stack);
+    res.status(500).json({ message: 'Error creating student registration: ' + err.message });
   }
 });
 
