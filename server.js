@@ -458,22 +458,44 @@ if (SENDGRID_API_KEY) {
 async function sendMail(mailOptions) {
   console.log('Attempting to send email to:', mailOptions.to);
   
-  // 1. Try Gmail SMTP (most reliable)
+  // 1. Try Brevo API first (most reliable on Render)
+  if (brevo && BREVO_API_KEY) {
+    console.log('Using Brevo API for email');
+    try {
+      const apiInstance = new brevo.TransactionalEmailsApi();
+      const sendSmtpEmail = {
+        sender: { email: mailOptions.from || EMAIL_USER, name: 'WTSKF-GOA' },
+        to: [{ email: mailOptions.to }],
+        subject: mailOptions.subject,
+        htmlContent: mailOptions.html
+      };
+      const result = await apiInstance.sendTransacEmail(sendSmtpEmail);
+      console.log('✅ Email sent successfully via Brevo API to:', mailOptions.to, 'MessageId:', result.messageId);
+      return;
+    } catch (e) {
+      console.error('❌ Brevo API send error:', e.message);
+      // Continue to fallback
+    }
+  }
+  
+  // 2. Try Gmail SMTP with timeout
   if (gmailTransporter) {
     console.log('Using Gmail SMTP for email');
     try {
-      const info = await gmailTransporter.sendMail({
-        from: `"WTSKF-GOA" <${EMAIL_USER}>`,
-        to: mailOptions.to,
-        subject: mailOptions.subject,
-        html: mailOptions.html,
-        text: mailOptions.text || 'Please view this email in an HTML-capable client.'
-      });
+      const info = await Promise.race([
+        gmailTransporter.sendMail({
+          from: `"WTSKF-GOA" <${EMAIL_USER}>`,
+          to: mailOptions.to,
+          subject: mailOptions.subject,
+          html: mailOptions.html,
+          text: mailOptions.text || 'Please view this email in an HTML-capable client.'
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Gmail timeout')), 10000))
+      ]);
       console.log('✅ Email sent successfully via Gmail SMTP to:', mailOptions.to, 'MessageId:', info.messageId);
       return;
     } catch (e) {
       console.error('❌ Gmail SMTP send error:', e.message);
-      console.error('Full error:', e);
       // Continue to fallback
     }
   }
@@ -2263,27 +2285,16 @@ app.post('/api/student-register', async (req, res) => {
       `
     };
     
-    // Send email synchronously - wait for confirmation
-    let emailSent = false;
-    let emailError = null;
-    try {
-      console.log('📧 Sending email to:', e);
-      await sendMail(mailOptions);
-      emailSent = true;
-      console.log('✅ Email SENT SUCCESSFULLY to:', e);
-    } catch (err) {
-      emailError = err.message;
-      console.error('❌ Email FAILED:', err.message);
-    }
+    // Send email in background - don't block registration response
+    console.log('📧 Starting email send to:', e);
+    sendMail(mailOptions)
+      .then(() => console.log('✅ Email SENT SUCCESSFULLY to:', e))
+      .catch(err => console.error('❌ Email FAILED:', err.message));
     
-    // Return response with email status
+    // Return success immediately - don't wait for email
     res.status(201).json({
       ...inserted[0],
-      emailSent: emailSent,
-      emailError: emailError,
-      message: emailSent 
-        ? 'Registration successful! Please check your email to verify your account.'
-        : 'Registration saved but email failed to send. Please contact support.'
+      message: 'Registration successful! Please check your email to verify your account.'
     });
   } catch (err) {
     console.error('POST /api/student-register error:', err.message);
