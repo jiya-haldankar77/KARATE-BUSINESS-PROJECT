@@ -402,18 +402,18 @@ app.delete('/api/achievements/media/:id', verifyToken, async (req, res) => {
   }
 });
 
-// Force load Gmail credentials - HARDCODED WORKING CREDENTIALS
-const EMAIL_USER = process.env.EMAIL_USER || 'karatesubhash455@gmail.com';
-const EMAIL_PASS = (process.env.EMAIL_PASS || 'dfymcxhqljfirkib').replace(/\s/g, '');
+// Email configuration
+const EMAIL_USER = String(process.env.EMAIL_USER || '').trim();
+const EMAIL_PASS = String(process.env.EMAIL_PASS || '').replace(/\s/g, '').trim();
 
 console.log('📧 Email configuration:');
-console.log('EMAIL_USER:', EMAIL_USER);
+console.log('EMAIL_USER:', EMAIL_USER || '(missing)');
 console.log('EMAIL_PASS configured:', !!EMAIL_PASS);
 
-// Brevo configuration (SMTP preferred over API)
-const BREVO_API_KEY = process.env.BREVO_API_KEY || '';
-const BREVO_SMTP_KEY = process.env.BREVO_SMTP_KEY || '';
-const BREVO_SMTP_USER = process.env.BREVO_SMTP_USER || 'karatesubhash455@gmail.com';
+// Brevo configuration (SMTP primary)
+const BREVO_API_KEY = String(process.env.BREVO_API_KEY || '').trim();
+const BREVO_SMTP_KEY = String(process.env.BREVO_SMTP_KEY || '').trim();
+const BREVO_SMTP_USER = String(process.env.BREVO_SMTP_USER || 'a44e83001@smtp-brevo.com').trim();
 
 // Configure Brevo API client (fallback)
 if (brevo && BREVO_API_KEY) {
@@ -422,7 +422,7 @@ if (brevo && BREVO_API_KEY) {
 
 // Configure Brevo SMTP transporter (primary)
 let brevoTransporter = null;
-if (nodemailer && BREVO_SMTP_KEY) {
+if (nodemailer && BREVO_SMTP_USER && BREVO_SMTP_KEY) {
   brevoTransporter = nodemailer.createTransport({
     host: 'smtp-relay.brevo.com',
     port: 587,
@@ -457,60 +457,21 @@ if (SENDGRID_API_KEY) {
 
 async function sendMail(mailOptions) {
   console.log('Attempting to send email to:', mailOptions.to);
-  
-  // 1. Try Brevo API first (most reliable on Render)
-  if (brevo && BREVO_API_KEY) {
-    console.log('Using Brevo API for email');
-    try {
-      const apiInstance = new brevo.TransactionalEmailsApi();
-      const sendSmtpEmail = {
-        sender: { email: mailOptions.from || EMAIL_USER, name: 'WTSKF-GOA' },
-        to: [{ email: mailOptions.to }],
-        subject: mailOptions.subject,
-        htmlContent: mailOptions.html
-      };
-      const result = await apiInstance.sendTransacEmail(sendSmtpEmail);
-      console.log('✅ Email sent successfully via Brevo API to:', mailOptions.to, 'MessageId:', result.messageId);
-      return;
-    } catch (e) {
-      console.error('❌ Brevo API send error:', e.message);
-      // Continue to fallback
-    }
-  }
-  
-  // 2. Try Gmail SMTP with timeout
-  if (gmailTransporter) {
-    console.log('Using Gmail SMTP for email');
+
+  // 1. Try Brevo SMTP first
+  if (brevoTransporter) {
+    console.log('Using Brevo SMTP for email');
     try {
       const info = await Promise.race([
-        gmailTransporter.sendMail({
-          from: `"WTSKF-GOA" <${EMAIL_USER}>`,
+        brevoTransporter.sendMail({
+          from: `"WTSKF-GOA" <${mailOptions.from || EMAIL_USER || 'karatesubhash455@gmail.com'}>`,
           to: mailOptions.to,
           subject: mailOptions.subject,
           html: mailOptions.html,
           text: mailOptions.text || 'Please view this email in an HTML-capable client.'
         }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Gmail timeout')), 10000))
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Brevo SMTP timeout')), 15000))
       ]);
-      console.log('✅ Email sent successfully via Gmail SMTP to:', mailOptions.to, 'MessageId:', info.messageId);
-      return;
-    } catch (e) {
-      console.error('❌ Gmail SMTP send error:', e.message);
-      // Continue to fallback
-    }
-  }
-  
-  // 2. Try Brevo SMTP (fallback)
-  if (brevoTransporter) {
-    console.log('Using Brevo SMTP for email');
-    try {
-      const info = await brevoTransporter.sendMail({
-        from: `"WTSKF-GOA" <${mailOptions.from || EMAIL_USER || 'karatesubhash455@gmail.com'}>`,
-        to: mailOptions.to,
-        subject: mailOptions.subject,
-        html: mailOptions.html,
-        text: mailOptions.text || 'Please view this email in an HTML-capable client.'
-      });
       console.log('✅ Email sent successfully via Brevo SMTP to:', mailOptions.to, 'MessageId:', info.messageId);
       return;
     } catch (e) {
@@ -518,8 +479,8 @@ async function sendMail(mailOptions) {
       // Continue to fallback
     }
   }
-  
-  // 3. Try Brevo API (fallback)
+
+  // 2. Fallback: Brevo API
   if (brevo && BREVO_API_KEY) {
     console.log('Using Brevo API for email');
     try {
@@ -534,7 +495,29 @@ async function sendMail(mailOptions) {
       console.log('✅ Email sent successfully via Brevo API to:', mailOptions.to, 'MessageId:', result.messageId);
       return;
     } catch (e) {
-      console.error('❌ Brevo API send error:', e);
+      console.error('❌ Brevo API send error:', e.message);
+      // Continue to fallback
+    }
+  }
+
+  // 3. Final fallback: Gmail SMTP
+  if (gmailTransporter) {
+    console.log('Using Gmail SMTP for email');
+    try {
+      const info = await Promise.race([
+        gmailTransporter.sendMail({
+          from: `"WTSKF-GOA" <${mailOptions.from || EMAIL_USER}>`,
+          to: mailOptions.to,
+          subject: mailOptions.subject,
+          html: mailOptions.html,
+          text: mailOptions.text || 'Please view this email in an HTML-capable client.'
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Gmail timeout')), 10000))
+      ]);
+      console.log('✅ Email sent successfully via Gmail SMTP to:', mailOptions.to, 'MessageId:', info.messageId);
+      return;
+    } catch (e) {
+      console.error('❌ Gmail SMTP send error:', e.message);
       // Continue to fallback
     }
   }
@@ -2362,11 +2345,11 @@ app.post('/api/resend-student-verification', async (req, res) => {
 
 // Test email endpoint - auto sends to test address
 app.post('/api/test-email', async (req, res) => {
-  const testEmail = req.body.to || 'jiyahaldnakar777@gmail.com';
+  const testEmail = req.body.to || 'creativeanisha00@gmail.com';
   
   console.log('🧪 TEST EMAIL: Sending to', testEmail);
   console.log('🧪 EMAIL_USER:', EMAIL_USER);
-  console.log('🧪 Gmail transporter exists:', !!gmailTransporter);
+  console.log('🧪 Brevo transporter exists:', !!brevoTransporter);
   
   const mailOptions = {
     to: testEmail,
@@ -2390,14 +2373,9 @@ app.post('/api/test-email', async (req, res) => {
   };
 
   try {
-    if (!gmailTransporter) {
-      throw new Error('Gmail transporter not configured - check EMAIL_USER and EMAIL_PASS');
-    }
-    
-    console.log('🧪 Using Gmail SMTP to send...');
-    const info = await gmailTransporter.sendMail({
-      from: `"WTSKF-GOA Test" <${EMAIL_USER}>`,
+    const info = await sendMail({
       to: testEmail,
+      from: EMAIL_USER,
       subject: 'URGENT TEST - WTSKF-GOA Registration System',
       html: mailOptions.html
     });
