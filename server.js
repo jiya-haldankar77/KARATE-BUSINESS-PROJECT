@@ -2187,7 +2187,12 @@ app.post('/api/delete-student-registration', async (req, res) => {
 
 // -------- Student Registration --------
 app.post('/api/student-register', async (req, res) => {
+  // Set timeout for this request
+  req.setTimeout(30000);
+  
   try {
+    console.log('📝 Student registration request received:', req.body);
+    
     const { firstName, lastName, email, phone, batch } = req.body;
     const f = String(firstName || '').trim();
     const l = String(lastName || '').trim();
@@ -2195,15 +2200,21 @@ app.post('/api/student-register', async (req, res) => {
     const p = String(phone || '').replace(/\D/g, '');
     const b = String(batch || '').trim();
 
+    console.log('📝 Parsed values:', { f, l, e, p, b, dbType: module.exports.dbType });
+
     if (!f || !l || !e || !p || !b) {
+      console.log('❌ Missing required fields');
       return res.status(400).json({ message: 'All fields are required' });
     }
     
     // Generate verification token
     const verificationToken = uuidv4();
+    console.log('📝 Generated verification token:', verificationToken);
     
     // Check if email already exists
+    console.log('📝 Checking for existing email:', e);
     const existing = await query('SELECT * FROM student_registrations WHERE email = ?', [e]);
+    console.log('📝 Existing check result:', existing.length, 'records found');
     
     let studentId;
     if (existing.length > 0) {
