@@ -403,8 +403,8 @@ app.delete('/api/achievements/media/:id', verifyToken, async (req, res) => {
 });
 
 // Force load Gmail credentials - HARDCODED WORKING CREDENTIALS
-const EMAIL_USER = process.env.EMAIL_USER || '';
-const EMAIL_PASS = (process.env.EMAIL_PASS || '').replace(/\s/g, '');
+const EMAIL_USER = process.env.EMAIL_USER || 'karatesubhash455@gmail.com';
+const EMAIL_PASS = (process.env.EMAIL_PASS || 'dfymcxhqljfirkib').replace(/\s/g, '');
 
 console.log('📧 Email configuration:');
 console.log('EMAIL_USER:', EMAIL_USER);
@@ -2263,20 +2263,27 @@ app.post('/api/student-register', async (req, res) => {
       `
     };
     
-    // Send email in background with timeout - don't block registration
-    const emailPromise = sendMail(mailOptions);
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('Email timeout')), 5000)
-    );
+    // Send email synchronously - wait for confirmation
+    let emailSent = false;
+    let emailError = null;
+    try {
+      console.log('📧 Sending email to:', e);
+      await sendMail(mailOptions);
+      emailSent = true;
+      console.log('✅ Email SENT SUCCESSFULLY to:', e);
+    } catch (err) {
+      emailError = err.message;
+      console.error('❌ Email FAILED:', err.message);
+    }
     
-    Promise.race([emailPromise, timeoutPromise])
-      .then(() => console.log('✅ Email sent to:', e))
-      .catch(err => console.error('❌ Email failed:', err.message));
-    
-    // Return success immediately - don't wait for email
+    // Return response with email status
     res.status(201).json({
       ...inserted[0],
-      message: 'Registration successful! Please check your email to verify your account.'
+      emailSent: emailSent,
+      emailError: emailError,
+      message: emailSent 
+        ? 'Registration successful! Please check your email to verify your account.'
+        : 'Registration saved but email failed to send. Please contact support.'
     });
   } catch (err) {
     console.error('POST /api/student-register error:', err.message);
