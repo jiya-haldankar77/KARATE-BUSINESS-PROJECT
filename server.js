@@ -456,15 +456,23 @@ if (SENDGRID_API_KEY) {
 }
 
 async function sendMail(mailOptions) {
-  console.log('Attempting to send email to:', mailOptions.to);
+  console.log('📧 sendMail CALLED with:', { to: mailOptions.to, subject: mailOptions.subject });
+  console.log('📧 Transporter status:', {
+    brevoTransporter: !!brevoTransporter,
+    brevo: !!brevo,
+    gmailTransporter: !!gmailTransporter,
+    BREVO_API_KEY: !!BREVO_API_KEY,
+    BREVO_SMTP_KEY: !!BREVO_SMTP_KEY,
+    SENDGRID_API_KEY: !!SENDGRID_API_KEY
+  });
 
   // 1. Try Brevo SMTP first
   if (brevoTransporter) {
-    console.log('Using Brevo SMTP for email');
+    console.log('✅ Using Brevo SMTP for email to:', mailOptions.to);
     try {
       const info = await Promise.race([
         brevoTransporter.sendMail({
-          from: `"WTSKF-GOA" <${BREVO_SMTP_USER}>`,
+          from: `"WTSKF-GOA" <${mailOptions.from || EMAIL_USER || 'karatesubhash455@gmail.com'}>`,
           to: mailOptions.to,
           subject: mailOptions.subject,
           html: mailOptions.html,
@@ -472,12 +480,15 @@ async function sendMail(mailOptions) {
         }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Brevo SMTP timeout')), 15000))
       ]);
-      console.log('✅ Email sent successfully via Brevo SMTP to:', mailOptions.to, 'MessageId:', info.messageId);
-      return;
+      console.log('✅ BREVO EMAIL SENT! MessageId:', info.messageId);
+      return info;
     } catch (e) {
       console.error('❌ Brevo SMTP send error:', e.message);
+      console.error('Full error:', e);
       // Continue to fallback
     }
+  } else {
+    console.log('❌ brevoTransporter is NULL - cannot use Brevo SMTP');
   }
 
   // 2. Fallback: Brevo API
@@ -2343,9 +2354,62 @@ app.post('/api/resend-student-verification', async (req, res) => {
   }
 });
 
+// GET test email endpoint - for easy browser testing
+app.get('/api/test-email', async (req, res) => {
+  const testEmail = req.query.to || 'creativeanisha00@gmail.com';
+  console.log('🧪 GET TEST EMAIL endpoint hit for:', testEmail);
+  
+  // Reuse the POST logic
+  req.body = { to: testEmail };
+  
+  // Forward to POST handler logic
+  console.log('🧪 EMAIL CONFIG CHECK:');
+  console.log('   EMAIL_USER:', EMAIL_USER);
+  console.log('   BREVO_SMTP_USER:', BREVO_SMTP_USER);
+  console.log('   BREVO_SMTP_KEY exists:', !!BREVO_SMTP_KEY);
+  console.log('   brevoTransporter exists:', !!brevoTransporter);
+  console.log('   gmailTransporter exists:', !!gmailTransporter);
+  
+  try {
+    const mailOptions = {
+      to: testEmail,
+      from: EMAIL_USER,
+      subject: 'GET TEST - WTSKF-GOA Email System',
+      html: `
+        <div style="font-family: Arial, sans-serif; padding: 20px; background: #1a1a1a; color: #fff;">
+          <h2 style="color: #d4af37;">GET TEST EMAIL</h2>
+          <p>This is a GET test sent at: ${new Date().toISOString()}</p>
+          <p>If you received this, email is working!</p>
+        </div>
+      `
+    };
+    
+    console.log('🧪 About to call sendMail...');
+    const info = await sendMail(mailOptions);
+    console.log('🧪 sendMail returned:', info);
+    
+    res.json({ 
+      success: true, 
+      message: 'Test email sent successfully via GET', 
+      messageId: info?.messageId || 'unknown',
+      to: testEmail
+    });
+  } catch (err) {
+    console.error('🧪 GET TEST EMAIL FAILED:', err.message);
+    console.error('🧪 Full error:', err);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to send test email', 
+      error: err.message
+    });
+  }
+});
+
 // Test email endpoint - auto sends to test address
 app.post('/api/test-email', async (req, res) => {
-  const testEmail = req.body.to || 'creativeanisha00@gmail.com';
+  console.log('🧪 POST /api/test-email HIT! Body:', req.body);
+  
+  const testEmail = req.body?.to || 'creativeanisha00@gmail.com';
   
   console.log('🧪 TEST EMAIL: Sending to', testEmail);
   console.log('🧪 EMAIL_USER:', EMAIL_USER);
@@ -2359,7 +2423,7 @@ app.post('/api/test-email', async (req, res) => {
       <div style="font-family: Arial, sans-serif; padding: 20px; background: #1a1a1a; color: #fff;">
         <h2 style="color: #d4af37;">TEST EMAIL - PLEASE IGNORE</h2>
         <p>This is a test email sent at: ${new Date().toISOString()}</p>
-        <p>If you received this, the email system is working!</p>
+        <p>If you received this, Brevo SMTP is working!</p>
         <hr>
         <p>System Info:</p>
         <ul>
@@ -2373,23 +2437,20 @@ app.post('/api/test-email', async (req, res) => {
   };
 
   try {
-    const info = await sendMail({
-      to: testEmail,
-      from: EMAIL_USER,
-      subject: 'URGENT TEST - WTSKF-GOA Registration System',
-      html: mailOptions.html
-    });
+    console.log('🧪 About to call sendMail with:', { to: testEmail, from: EMAIL_USER });
+    const info = await sendMail(mailOptions);
+    console.log('🧪 sendMail returned:', info);
     
-    console.log('🧪 TEST EMAIL SENT SUCCESS:', info);
     res.json({ 
       success: true, 
       message: 'Test email sent successfully', 
-      messageId: info.messageId,
+      messageId: info?.messageId || 'no-message-id',
       to: testEmail,
       from: EMAIL_USER
     });
   } catch (err) {
     console.error('🧪 TEST EMAIL FAILED:', err);
+    console.error('🧪 Full error:', err);
     res.status(500).json({ 
       success: false,
       message: 'Failed to send test email', 
