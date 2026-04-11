@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Built By - J. Equinox</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary: #d4af37;
+            --primary-light: #f4d03f;
+            --dark: #0a0a0a;
+            --dark-lighter: #1a1a1a;
+            --white: #ffffff;
+            --gray: #888;
+            --gold-glow: rgba(212, 175, 55, 0.3);
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--dark);
+            color: var(--white);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+        }
+
+        /* Navigation */
+        .navbar {
+            background: rgba(10, 10, 10, 0.95);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(212, 175, 55, 0.2);
+            padding: 15px 0;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+        }
+
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .nav-logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            color: var(--white);
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+
+        .nav-logo img {
+            height: 40px;
+            width: 40px;
+            border-radius: 50%;
+            border: 2px solid var(--primary);
+        }
+
+        .nav-back {
+            color: var(--primary);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+        }
+
+        .nav-back:hover {
+            color: var(--primary-light);
+            transform: translateX(-3px);
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 120px 20px 60px;
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 50%, #0a0a0a 100%);
+            position: relative;
+        }
+
+        .main-content::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: radial-gradient(ellipse at center, rgba(212, 175, 55, 0.05) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        /* Container */
+        .container {
+            max-width: 800px;
+            width: 100%;
+            text-align: center;
+            position: relative;
+            z-index: 1;
+            opacity: 0;
+            animation: fadeInUp 1s ease forwards;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Logo Section */
+        .logo-section {
+            margin-bottom: 40px;
+        }
+
+        .main-logo {
+            width: 150px;
+            height: 150px;
+            object-fit: contain;
+            filter: drop-shadow(0 0 20px rgba(212, 175, 55, 0.4));
+            transition: all 0.5s ease;
+            animation: glowPulse 3s ease-in-out infinite;
+        }
+
+        @keyframes glowPulse {
+            0%, 100% {
+                filter: drop-shadow(0 0 20px rgba(212, 175, 55, 0.4));
+            }
+            50% {
+                filter: drop-shadow(0 0 40px rgba(212, 175, 55, 0.7));
+            }
+        }
+
+        .main-logo:hover {
+            transform: scale(1.05);
+            filter: drop-shadow(0 0 50px rgba(212, 175, 55, 0.9));
+        }
+
+        .brand-title {
+            font-size: 2.5rem;
+            font-weight: 300;
+            letter-spacing: 8px;
+            color: var(--primary);
+            margin-top: 20px;
+            text-transform: uppercase;
+        }
+
+        /* Tagline Section */
+        .tagline-section {
+            margin: 30px 0;
+            padding: 25px 0;
+            border-top: 1px solid rgba(212, 175, 55, 0.3);
+            border-bottom: 1px solid rgba(212, 175, 55, 0.3);
+        }
+
+        .main-tagline {
+            font-size: 1.3rem;
+            color: var(--primary);
+            font-weight: 500;
+            letter-spacing: 2px;
+            margin-bottom: 10px;
+        }
+
+        .support-tagline {
+            font-size: 0.9rem;
+            color: var(--gray);
+            font-style: italic;
+            letter-spacing: 1px;
+        }
+
+        /* About Section */
+        .about-section {
+            margin: 40px 0;
+            padding: 0 20px;
+        }
+
+        .about-text {
+            font-size: 1.1rem;
+            color: #ccc;
+            line-height: 1.8;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        /* Divider */
+        .divider {
+            width: 100px;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--primary), transparent);
+            margin: 40px auto;
+        }
+
+        /* Contact Section */
+        .contact-section {
+            margin: 40px 0;
+        }
+
+        .contact-title {
+            font-size: 1.2rem;
+            color: var(--primary);
+            letter-spacing: 3px;
+            margin-bottom: 30px;
+            text-transform: uppercase;
+        }
+
+        .contact-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            align-items: center;
+        }
+
+        .contact-item {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            color: #ccc;
+            text-decoration: none;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            padding: 10px 20px;
+            border-radius: 8px;
+        }
+
+        .contact-item:hover {
+            color: var(--primary);
+            background: rgba(212, 175, 55, 0.1);
+            transform: translateX(5px);
+        }
+
+        .contact-item i {
+            color: var(--primary);
+            font-size: 1.1rem;
+            width: 20px;
+        }
+
+        .contact-item span {
+            letter-spacing: 1px;
+        }
+
+        /* Footer */
+        .page-footer {
+            background: rgba(10, 10, 10, 0.95);
+            border-top: 1px solid rgba(212, 175, 55, 0.2);
+            padding: 20px;
+            text-align: center;
+        }
+
+        .page-footer p {
+            color: var(--gray);
+            font-size: 0.85rem;
+            letter-spacing: 1px;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .brand-title {
+                font-size: 1.8rem;
+                letter-spacing: 4px;
+            }
+
+            .main-logo {
+                width: 120px;
+                height: 120px;
+                filter: drop-shadow(0 0 15px rgba(212, 175, 55, 0.4));
+            }
+
+            .main-tagline {
+                font-size: 1.1rem;
+            }
+
+            .about-text {
+                font-size: 1rem;
+            }
+
+            .contact-grid {
+                gap: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">
+                <img src="image.png" alt="WTSKF-GOA">
+                <span>WTSKF-GOA</span>
+            </a>
+            <a href="index.html" class="nav-back">
+                <i class="fas fa-arrow-left"></i>
+                <span>Back to Home</span>
+            </a>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="container">
+            <!-- Logo Section -->
+            <div class="logo-section">
+                <img src="gallery/j.png" alt="J. Equinox Logo" class="main-logo">
+                <p style="color: #888; font-size: 0.9rem; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 10px;">Developed by</p>
+                <h1 class="brand-title">J. Equinox</h1>
+            </div>
+
+            <!-- Tagline Section -->
+            <div class="tagline-section">
+                <p class="main-tagline">Building Brands Beyond Boundaries</p>
+                <p class="support-tagline">From Your Office to the World</p>
+            </div>
+
+            <!-- Divider -->
+            <div class="divider"></div>
+
+            <!-- About Section -->
+            <div class="about-section">
+                <p class="about-text">
+                    Creating high-performance, full-stack business websites for growing businesses across the world. We transform your vision into a digital reality, helping emerging brands reach global audiences with elegant, professional web solutions.
+                </p>
+            </div>
+
+            <!-- Divider -->
+            <div class="divider"></div>
+
+            <!-- Contact Section -->
+            <div class="contact-section">
+                <h2 class="contact-title">Get In Touch</h2>
+                <div class="contact-grid">
+                    <a href="tel:7620571854" class="contact-item">
+                        <i class="fas fa-phone"></i>
+                        <span>7620571854</span>
+                    </a>
+                    <a href="tel:9579811783" class="contact-item">
+                        <i class="fas fa-phone"></i>
+                        <span>9579811783</span>
+                    </a>
+                    <a href="mailto:jiyahaldankar777@gmail.com" class="contact-item">
+                        <i class="fas fa-envelope"></i>
+                        <span>jiyahaldankar777@gmail.com</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="page-footer">
+        <p>&copy; 2026 J. Equinox. All rights reserved.</p>
+    </footer>
+</body>
+</html>

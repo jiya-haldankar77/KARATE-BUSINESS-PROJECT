@@ -1967,7 +1967,70 @@
             background: rgba(244, 67, 54, 0.15);
             color: #f44336;
         }
-    </style>
+    /* Footer Styles */
+.footer-developer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 12px 20px;
+    background: rgba(10, 10, 10, 0.95);
+    backdrop-filter: blur(10px);
+    border-top: 1px solid rgba(212, 175, 55, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    z-index: 100;
+    transition: all 0.3s ease;
+}
+
+.footer-developer a {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-decoration: none;
+    color: #e0e0e0;
+    font-size: 13px;
+    font-weight: 400;
+    letter-spacing: 0.5px;
+    transition: all 0.3s ease;
+}
+
+.footer-developer .footer-logo {
+    width: 28px;
+    height: 28px;
+    object-fit: contain;
+    transition: all 0.3s ease;
+}
+
+.footer-developer:hover {
+    background: rgba(10, 10, 10, 0.98);
+    border-top-color: rgba(212, 175, 55, 0.5);
+}
+
+.footer-developer:hover a {
+    color: #d4af37;
+    text-shadow: 0 0 10px rgba(212, 175, 55, 0.5);
+}
+
+.footer-developer:hover .footer-logo {
+    filter: drop-shadow(0 0 8px rgba(212, 175, 55, 0.6));
+}
+
+@media (max-width: 768px) {
+    .footer-developer {
+        padding: 10px 15px;
+    }
+    .footer-developer a {
+        font-size: 11px;
+    }
+    .footer-developer .footer-logo {
+        width: 22px;
+        height: 22px;
+    }
+}
+</style>
 </head>
 <body>
     <!-- Navigation -->
@@ -1989,6 +2052,7 @@
                 <a href="#" onclick="showSection('courses')">Courses</a>
                 <a href="#" onclick="showSection('instructors')">Instructors</a>
                 <a href="gallery.html">Achievements</a>
+                <a href="built-by.html">Built By</a>
             </div>
             
             <div class="auth-buttons">
@@ -5351,6 +5415,14 @@
             };
         })();
     </script>
+
+    <!-- Footer - Developed by J. Equinox -->
+    <footer class="footer-developer">
+        <a href="built-by.html" title="View Developer Information">
+            <img src="gallery/j.png" alt="J. Equinox Logo" class="footer-logo">
+            <span>Developed by J. Equinox</span>
+        </a>
+    </footer>
 
 </body>
 </html>
