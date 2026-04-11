@@ -464,7 +464,7 @@ async function sendMail(mailOptions) {
     try {
       const info = await Promise.race([
         brevoTransporter.sendMail({
-          from: `"WTSKF-GOA" <${mailOptions.from || EMAIL_USER || 'karatesubhash455@gmail.com'}>`,
+          from: `"WTSKF-GOA" <${BREVO_SMTP_USER}>`,
           to: mailOptions.to,
           subject: mailOptions.subject,
           html: mailOptions.html,
