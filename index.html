@@ -4070,77 +4070,44 @@
                     return;
                 }
                 
-                // Simple photo handling - just use FileReader without compression for now
-                var photoInput = document.getElementById('instructorPhoto');
-                console.log('Photo input:', photoInput);
-                console.log('Photo input files:', photoInput ? photoInput.files : 'No input found');
+                // Use FormData for file upload
+                var formData = new FormData();
+                formData.append('name', name);
+                formData.append('description', description || '');
+                formData.append('rank', rank || '');
                 
+                var photoInput = document.getElementById('instructorPhoto');
                 if (photoInput && photoInput.files && photoInput.files[0]) {
                     var file = photoInput.files[0];
-                    console.log('Processing file:', file.name, file.size);
-                    
-                    if (file.size > 2 * 1024 * 1024) { // 2MB limit
+                    console.log('Adding photo file:', file.name, file.size);
+                    if (file.size > 2 * 1024 * 1024) {
                         alert('Photo size must be less than 2MB');
                         return;
                     }
-                    
-                    var reader = new FileReader();
-                    reader.onload = function(e) {
-                        console.log('File reader completed');
-                        var photoData = e.target.result;
-                        console.log('Photo data length:', photoData.length);
-                        
-                        var data = {
-                            name: name,
-                            description: description,
-                            rank: rank,
-                            photo_url: photoData
-                        };
-                        
-                        var method = id ? 'PUT' : 'POST';
-                        var url = id ? '/api/instructors/' + id : '/api/instructors';
-                        
-                        console.log('Sending request:', method, url, data.photo_url.length > 0 ? 'with photo' : 'no photo');
-                        
-                        apiCall(method, url, data)
-                            .then(function () { 
-                                console.log('Instructor saved successfully');
-                                loadInstructors(); 
-                                loadHomeInstructors();
-                                window.closeModal('instructorModal');
-                            })
-                            .catch(function(error) {
-                                console.error('Error saving instructor:', error);
-                            });
-                    };
-                    reader.readAsDataURL(file);
-                } else {
-                    // No photo selected
-                    console.log('No photo file selected');
-                    
-                    var data = {
-                        name: name,
-                        description: description,
-                        rank: rank,
-                        photo_url: ''
-                    };
-                    
-                    var method = id ? 'PUT' : 'POST';
-                    var url = id ? '/api/instructors/' + id : '/api/instructors';
-                    
-                    console.log('Sending request without photo:', method, url);
-                    
-                    apiCall(method, url, data)
-                        .then(function () { 
-                            console.log('Instructor saved successfully without photo');
-                            loadInstructors(); 
-                            loadHomeInstructors();
-                            window.closeModal('instructorModal');
-                        })
-                        .catch(function(error) {
-                            console.error('Error saving instructor:', error);
-                        });
+                    formData.append('photo', file);
                 }
+                
+                var method = id ? 'PUT' : 'POST';
+                var url = id ? '/api/instructors/' + id : '/api/instructors';
+                
+                fetch(url, {
+                    method: method,
+                    body: formData
+                })
+                .then(function(response) {
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    return response.json();
+                })
+                .then(function(data) {
+                    console.log('Instructor saved:', data);
+                    loadInstructors();
+                    loadHomeInstructors();
+                    window.closeModal('instructorModal');
+                })
+                .catch(function(error) {
+                    console.error('Error saving instructor:', error);
+                    alert('Failed to save instructor: ' + error.message);
+                });
             };
 
             // Add proper close modal function for instructor modal

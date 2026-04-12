@@ -731,6 +731,15 @@ async function initializeDatabase() {
         screenshot_base64 TEXT,
         validation_json TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS store_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        description TEXT,
+        price REAL NOT NULL,
+        image_url TEXT,
+        active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )`
     ];
 
