@@ -72,6 +72,38 @@ const achievementsUpload = multer({
   }
 });
 
+// Instructors photo upload configuration
+const INSTRUCTORS_DIR = path.join(__dirname, 'uploads', 'instructors');
+function ensureInstructorsDir() {
+  if (!fs.existsSync(INSTRUCTORS_DIR)) {
+    fs.mkdirSync(INSTRUCTORS_DIR, { recursive: true });
+  }
+}
+
+const instructorsStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    ensureInstructorsDir();
+    cb(null, INSTRUCTORS_DIR);
+  },
+  filename: function (req, file, cb) {
+    const original = safeBaseName(file.originalname || 'upload');
+    const ext = path.extname(original).toLowerCase();
+    const base = path.basename(original, ext);
+    cb(null, `${Date.now()}_${uuidv4()}_${base}${ext}`);
+  }
+});
+
+const instructorsUpload = multer({
+  storage: instructorsStorage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: function (req, file, cb) {
+    const mime = String(file.mimetype || '').toLowerCase();
+    const ok = mime.startsWith('image/');
+    if (!ok) return cb(new Error('Only image uploads are allowed for instructors'));
+    cb(null, true);
+  }
+});
+
 const ACHIEVEMENTS_INDEX_PATH = path.join(ACHIEVEMENTS_DIR, 'index.json');
 function readAchievementsIndex() {
   try {
@@ -1122,23 +1154,37 @@ app.get('/api/instructors', async (req, res) => {
   }
 });
 
-app.post('/api/instructors', async (req, res) => {
+app.post('/api/instructors', instructorsUpload.single('photo'), async (req, res) => {
   try {
-    const { name, description, rank, photo_url } = req.body;
+    const { name, description, rank } = req.body;
+    console.log('POST /api/instructors - body:', req.body);
+    console.log('POST /api/instructors - file:', req.file);
+    
     if (!name) return res.status(400).json({ message: 'Name is required' });
+    
+    // Handle photo: use uploaded file path or empty
+    let finalPhotoUrl = '';
+    if (req.file) {
+      const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+      const host = req.headers.host || req.get('host') || 'karate-admin-backend.onrender.com';
+      finalPhotoUrl = `${protocol}://${host}/uploads/instructors/${req.file.filename}`;
+      console.log('Photo uploaded to:', finalPhotoUrl);
+    }
+    
     const result = await query(
-      'INSERT INTO instructors (name, description, `rank`, photo_url) VALUES (?, ?, ?, ?)',
-      [name, description || '', rank || '', photo_url || '']
+      'INSERT INTO instructors (name, description, belt_level, photo_url) VALUES (?, ?, ?, ?)',
+      [name, description || '', rank || '', finalPhotoUrl]
     );
     const inserted = await query('SELECT * FROM instructors WHERE id = ?', [result.insertId]);
     
     // Clear dashboard cache
     await invalidateCache('dashboard:admin*');
     
+    console.log('Instructor created:', inserted[0]);
     res.status(201).json(inserted[0]);
   } catch (err) {
     console.error('POST /api/instructors error', err);
-    res.status(500).json({ message: 'Error creating instructor' });
+    res.status(500).json({ message: 'Error creating instructor: ' + err.message });
   }
 });
 
