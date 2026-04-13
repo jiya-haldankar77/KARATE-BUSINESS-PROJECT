@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
+const mongoose = require('mongoose');
 const mysql = require('mysql2/promise');
 const path = require('path');
 let brevo;
@@ -23,6 +24,27 @@ const dns = require('dns');
 try { dns.setDefaultResultOrder('ipv4first'); } catch (_) {}
 let sqlite3;
 try { sqlite3 = require('sqlite3'); } catch (e) { sqlite3 = null; }
+
+// MongoDB Models
+const Admin = require('./models/Admin');
+const Instructor = require('./models/Instructor');
+const Batch = require('./models/Batch');
+const Student = require('./models/Student');
+const Tournament = require('./models/Tournament');
+const StoreItem = require('./models/StoreItem');
+const FeesPayment = require('./models/FeesPayment');
+
+// Connect to MongoDB
+const connectDB = async () => {
+  try {
+    const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/karate';
+    await mongoose.connect(mongoURI);
+    console.log('MongoDB Connected: ' + mongoURI);
+  } catch (err) {
+    console.error('MongoDB Connection Error:', err);
+    process.exit(1);
+  }
+};
 
 const app = express();
 app.set('trust proxy', 1);
@@ -271,51 +293,6 @@ app.get('/api/fees-payments/excel', async (req, res) => {
   }
 });
 
-app.post('/api/fees-payments', async (req, res) => {
-  try {
-    const {
-      full_name,
-      phone,
-      batch_name,
-      centre,
-      payment_datetime,
-      status,
-      txn_id,
-      amount,
-      img_hash,
-      screenshot_base64,
-      validation
-    } = req.body || {};
-
-    if (!full_name || !phone || !batch_name || !centre) {
-      return res.status(400).json({ message: 'Missing required fields' });
-    }
-    const dt = payment_datetime ? new Date(payment_datetime) : new Date();
-    if (isNaN(dt.getTime())) return res.status(400).json({ message: 'Invalid payment_datetime' });
-
-    // Dedup by txn_id or img_hash if provided
-    if (txn_id) {
-      const existing = await query('SELECT id FROM fees_payments WHERE txn_id = ?', [txn_id]);
-      if (existing.length) return res.status(409).json({ message: 'Duplicate transaction ID' });
-    }
-    if (img_hash) {
-      const existing2 = await query('SELECT id FROM fees_payments WHERE img_hash = ?', [img_hash]);
-      if (existing2.length) return res.status(409).json({ message: 'Duplicate screenshot detected' });
-    }
-
-    const result = await query(
-      'INSERT INTO fees_payments (full_name, phone, batch_name, centre, payment_datetime, status, txn_id, amount, img_hash, screenshot_base64, validation_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [full_name, phone, batch_name, centre, new Date(dt.getTime() - dt.getTimezoneOffset()*60000), status || 'Pending Verification', txn_id || null, amount || null, img_hash || null, screenshot_base64 || null, validation ? JSON.stringify(validation) : null]
-    );
-
-    const inserted = await query('SELECT * FROM fees_payments WHERE id = ?', [result.insertId]);
-    refreshFeesExcel();
-    res.status(201).json(inserted[0]);
-  } catch (err) {
-    console.error('POST /api/fees-payments error', err);
-    res.status(500).json({ message: 'Error creating fees payment' });
-  }
-});
 
 // App already created above
 
@@ -1020,8 +997,8 @@ async function initializeDatabase() {
   }
 }
 
-// Initialize the database
-initializeDatabase().catch(console.error);
+// Initialize MongoDB connection
+connectDB().catch(console.error);
 
 // Query function supporting MySQL and PostgreSQL
 async function query(sql, params) {
@@ -1138,16 +1115,10 @@ async function invalidateCache(pattern) {
     }
   } catch (error) {
     console.log('Cache invalidation error:', error.message);
-  }
-}
-
-// (moved middleware above to ensure availability for all routes)
-
-// -------- Instructors --------
 app.get('/api/instructors', async (req, res) => {
   try {
-    const rows = await query('SELECT * FROM instructors ORDER BY created_at DESC');
-    res.json(rows);
+    const instructors = await Instructor.find({ active: true }).sort({ createdAt: -1 });
+    res.json(instructors);
   } catch (err) {
     console.error('GET /api/instructors error', err);
     res.status(500).json({ message: 'Error fetching instructors' });
@@ -1171,17 +1142,16 @@ app.post('/api/instructors', instructorsUpload.single('photo'), async (req, res)
       console.log('Photo uploaded to:', finalPhotoUrl);
     }
     
-    const result = await query(
-      'INSERT INTO instructors (name, description, belt_level, photo_url) VALUES (?, ?, ?, ?)',
-      [name, description || '', rank || '', finalPhotoUrl]
-    );
-    const inserted = await query('SELECT * FROM instructors WHERE id = ?', [result.insertId]);
+    const instructor = new Instructor({
+      name,
+      description: description || '',
+      beltLevel: rank || '',
+      photoUrl: finalPhotoUrl
+    });
+    await instructor.save();
     
-    // Clear dashboard cache
-    await invalidateCache('dashboard:admin*');
-    
-    console.log('Instructor created:', inserted[0]);
-    res.status(201).json(inserted[0]);
+    console.log('Instructor created:', instructor);
+    res.status(201).json(instructor);
   } catch (err) {
     console.error('POST /api/instructors error', err);
     res.status(500).json({ message: 'Error creating instructor: ' + err.message });
@@ -1192,17 +1162,15 @@ app.put('/api/instructors/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description, rank, photo_url } = req.body;
-    const result = await query(
-      'UPDATE instructors SET name = ?, description = ?, `rank` = ?, photo_url = ? WHERE id = ?',
-      [name, description || '', rank || '', photo_url || '', id]
+    
+    const instructor = await Instructor.findByIdAndUpdate(
+      id,
+      { name, description: description || '', beltLevel: rank || '', photoUrl: photo_url || '' },
+      { new: true }
     );
-    if (result.affectedRows === 0) return res.status(404).json({ message: 'Instructor not found' });
-    const updated = await query('SELECT * FROM instructors WHERE id = ?', [id]);
     
-    // Clear dashboard cache
-    await invalidateCache('dashboard:admin*');
-    
-    res.json(updated[0]);
+    if (!instructor) return res.status(404).json({ message: 'Instructor not found' });
+    res.json(instructor);
   } catch (err) {
     console.error('PUT /api/instructors/:id error', err);
     res.status(500).json({ message: 'Error updating instructor' });
@@ -1212,35 +1180,20 @@ app.put('/api/instructors/:id', async (req, res) => {
 app.delete('/api/instructors/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await query('DELETE FROM instructors WHERE id = ?', [id]);
-    if (result.affectedRows === 0) return res.status(404).json({ message: 'Instructor not found' });
-    
-    // Clear dashboard cache
-    await invalidateCache('dashboard:admin*');
-    
-    res.json({ success: true });
+    const instructor = await Instructor.findByIdAndUpdate(id, { active: false }, { new: true });
+    if (!instructor) return res.status(404).json({ message: 'Instructor not found' });
+    res.json({ message: 'Instructor deleted' });
   } catch (err) {
     console.error('DELETE /api/instructors/:id error', err);
     res.status(500).json({ message: 'Error deleting instructor' });
   }
 });
 
-// -------- Batches --------
+// -------- Batches (MongoDB) --------
 app.get('/api/batches', async (req, res) => {
   try {
-    const rows = await query(`
-      SELECT b.*
-      FROM batches b
-      INNER JOIN (
-        SELECT TRIM(name) AS nm, MAX(id) AS max_id
-        FROM batches
-        GROUP BY TRIM(name)
-      ) t
-        ON TRIM(b.name) = t.nm
-       AND b.id = t.max_id
-      ORDER BY b.created_at DESC
-    `);
-    res.json(rows);
+    const batches = await Batch.find({ active: true }).sort({ createdAt: -1 });
+    res.json(batches);
   } catch (err) {
     console.error('GET /api/batches error', err);
     res.status(500).json({ message: 'Error fetching batches' });
@@ -1251,16 +1204,16 @@ app.post('/api/batches', async (req, res) => {
   try {
     const { name, description, timing, centre } = req.body;
     if (!name) return res.status(400).json({ message: 'Name is required' });
-    const result = await query(
-      'INSERT INTO batches (name, description, timing, centre) VALUES (?, ?, ?, ?)',
-      [name, description || '', timing || '', centre || '']
-    );
-    const inserted = await query('SELECT * FROM batches WHERE id = ?', [result.insertId]);
     
-    // Clear dashboard cache
-    await invalidateCache('dashboard:admin*');
+    const batch = new Batch({
+      name,
+      description: description || '',
+      timing: timing || '',
+      centre: centre || ''
+    });
+    await batch.save();
     
-    res.status(201).json(inserted[0]);
+    res.status(201).json(batch);
   } catch (err) {
     console.error('POST /api/batches error', err);
     res.status(500).json({ message: 'Error creating batch' });
@@ -1271,17 +1224,15 @@ app.put('/api/batches/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description, timing, centre } = req.body;
-    const result = await query(
-      'UPDATE batches SET name = ?, description = ?, timing = ?, centre = ? WHERE id = ?',
-      [name, description || '', timing || '', centre || '', id]
+    
+    const batch = await Batch.findByIdAndUpdate(
+      id,
+      { name, description: description || '', timing: timing || '', centre: centre || '' },
+      { new: true }
     );
-    if (result.affectedRows === 0) return res.status(404).json({ message: 'Batch not found' });
-    const updated = await query('SELECT * FROM batches WHERE id = ?', [id]);
     
-    // Clear dashboard cache
-    await invalidateCache('dashboard:admin*');
-    
-    res.json(updated[0]);
+    if (!batch) return res.status(404).json({ message: 'Batch not found' });
+    res.json(batch);
   } catch (err) {
     console.error('PUT /api/batches/:id error', err);
     res.status(500).json({ message: 'Error updating batch' });
@@ -1291,8 +1242,8 @@ app.put('/api/batches/:id', async (req, res) => {
 app.delete('/api/batches/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await query('DELETE FROM batches WHERE id = ?', [id]);
-    if (result.affectedRows === 0) return res.status(404).json({ message: 'Batch not found' });
+    const batch = await Batch.findByIdAndUpdate(id, { active: false }, { new: true });
+    if (!batch) return res.status(404).json({ message: 'Batch not found' });
     res.json({ success: true });
   } catch (err) {
     console.error('DELETE /api/batches/:id error', err);
@@ -1599,11 +1550,11 @@ app.delete('/api/payments/:id', async (req, res) => {
   }
 });
 
-// -------- Tournaments --------
+// -------- Tournaments (MongoDB) --------
 app.get('/api/tournaments', async (req, res) => {
   try {
-    const rows = await query('SELECT * FROM tournaments ORDER BY date DESC');
-    res.json(rows);
+    const tournaments = await Tournament.find({ active: true }).sort({ date: -1 });
+    res.json(tournaments);
   } catch (err) {
     console.error('GET /api/tournaments error', err);
     res.status(500).json({ message: 'Error fetching tournaments' });
@@ -1617,21 +1568,15 @@ app.post('/api/tournaments', async (req, res) => {
       return res.status(400).json({ message: 'Title and date are required' });
     }
     
-    // Format date for MySQL DATE column (YYYY-MM-DD)
-    let formattedDate = date;
-    if (date && typeof date === 'string') {
-      // Handle ISO date strings like '1903-01-25T18:38:50.000Z'
-      if (date.includes('T')) {
-        formattedDate = date.split('T')[0];
-      }
-    }
+    const tournament = new Tournament({
+      name: title,
+      description: description || '',
+      date: new Date(date),
+      venue: location || ''
+    });
+    await tournament.save();
     
-    const result = await query(
-      'INSERT INTO tournaments (title, location, date, description) VALUES (?, ?, ?, ?)',
-      [title, location || '', formattedDate, description || '']
-    );
-    const inserted = await query('SELECT * FROM tournaments WHERE id = ?', [result.insertId]);
-    res.status(201).json(inserted[0]);
+    res.status(201).json(tournament);
   } catch (err) {
     console.error('POST /api/tournaments error', err);
     res.status(500).json({ message: 'Error creating tournament' });
@@ -1643,22 +1588,19 @@ app.put('/api/tournaments/:id', async (req, res) => {
     const { id } = req.params;
     const { title, location, date, description } = req.body;
     
-    // Format date for MySQL DATE column (YYYY-MM-DD)
-    let formattedDate = date;
-    if (date && typeof date === 'string') {
-      // Handle ISO date strings like '1903-01-25T18:38:50.000Z'
-      if (date.includes('T')) {
-        formattedDate = date.split('T')[0];
-      }
-    }
-    
-    const result = await query(
-      'UPDATE tournaments SET title = ?, location = ?, date = ?, description = ? WHERE id = ?',
-      [title, location || '', formattedDate, description || '', id]
+    const tournament = await Tournament.findByIdAndUpdate(
+      id,
+      {
+        name: title,
+        description: description || '',
+        date: new Date(date),
+        venue: location || ''
+      },
+      { new: true }
     );
-    if (result.affectedRows === 0) return res.status(404).json({ message: 'Tournament not found' });
-    const updated = await query('SELECT * FROM tournaments WHERE id = ?', [id]);
-    res.json(updated[0]);
+    
+    if (!tournament) return res.status(404).json({ message: 'Tournament not found' });
+    res.json(tournament);
   } catch (err) {
     console.error('PUT /api/tournaments/:id error', err);
     res.status(500).json({ message: 'Error updating tournament' });
@@ -1668,8 +1610,8 @@ app.put('/api/tournaments/:id', async (req, res) => {
 app.delete('/api/tournaments/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await query('DELETE FROM tournaments WHERE id = ?', [id]);
-    if (result.affectedRows === 0) return res.status(404).json({ message: 'Tournament not found' });
+    const tournament = await Tournament.findByIdAndUpdate(id, { active: false }, { new: true });
+    if (!tournament) return res.status(404).json({ message: 'Tournament not found' });
     res.json({ success: true });
   } catch (err) {
     console.error('DELETE /api/tournaments/:id error', err);
@@ -1677,11 +1619,11 @@ app.delete('/api/tournaments/:id', async (req, res) => {
   }
 });
 
-// -------- Store Items --------
+// -------- Store Items (MongoDB) --------
 app.get('/api/store-items', async (req, res) => {
   try {
-    const rows = await query('SELECT * FROM store_items ORDER BY created_at DESC');
-    res.json(rows);
+    const items = await StoreItem.find({ active: true }).sort({ createdAt: -1 });
+    res.json(items);
   } catch (err) {
     console.error('GET /api/store-items error', err);
     res.status(500).json({ message: 'Error fetching store items' });
@@ -1694,12 +1636,15 @@ app.post('/api/store-items', async (req, res) => {
     if (!name || price == null) {
       return res.status(400).json({ message: 'Name and price are required' });
     }
-    const result = await query(
-      'INSERT INTO store_items (name, price, description) VALUES (?, ?, ?)',
-      [name, price, description || '']
-    );
-    const inserted = await query('SELECT * FROM store_items WHERE id = ?', [result.insertId]);
-    res.status(201).json(inserted[0]);
+    
+    const item = new StoreItem({
+      name,
+      price,
+      description: description || ''
+    });
+    await item.save();
+    
+    res.status(201).json(item);
   } catch (err) {
     console.error('POST /api/store-items error', err);
     res.status(500).json({ message: 'Error creating store item' });
@@ -1710,13 +1655,15 @@ app.put('/api/store-items/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { name, price, description } = req.body;
-    const result = await query(
-      'UPDATE store_items SET name = ?, price = ?, description = ? WHERE id = ?',
-      [name, price, description || '', id]
+    
+    const item = await StoreItem.findByIdAndUpdate(
+      id,
+      { name, price, description: description || '' },
+      { new: true }
     );
-    if (result.affectedRows === 0) return res.status(404).json({ message: 'Store item not found' });
-    const updated = await query('SELECT * FROM store_items WHERE id = ?', [id]);
-    res.json(updated[0]);
+    
+    if (!item) return res.status(404).json({ message: 'Store item not found' });
+    res.json(item);
   } catch (err) {
     console.error('PUT /api/store-items/:id error', err);
     res.status(500).json({ message: 'Error updating store item' });
@@ -1726,8 +1673,8 @@ app.put('/api/store-items/:id', async (req, res) => {
 app.delete('/api/store-items/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await query('DELETE FROM store_items WHERE id = ?', [id]);
-    if (result.affectedRows === 0) return res.status(404).json({ message: 'Store item not found' });
+    const item = await StoreItem.findByIdAndUpdate(id, { active: false }, { new: true });
+    if (!item) return res.status(404).json({ message: 'Store item not found' });
     res.json({ success: true });
   } catch (err) {
     console.error('DELETE /api/store-items/:id error', err);
@@ -2149,7 +2096,7 @@ app.get('/api/dashboard/student', verifyToken, async (req, res) => {
   }
 });
 
-// -------- Authentication --------
+// -------- Authentication (MongoDB) --------
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password, role } = req.body;
@@ -2160,61 +2107,86 @@ app.post('/api/login', async (req, res) => {
     }
     
     if (role === 'admin') {
-      // Hardcoded admin credentials (in production, use proper authentication)
-      if (normEmail === 'karatesubhash455@gmail.com' && password === 'karate@123') {
-        const token = jwt.sign(
-          { email, role: 'admin', name: 'Admin' },
-          JWT_SECRET,
-          { expiresIn: '24h' }
-        );
-        res.json({
-          success: true,
-          token,
-          user: { email, role: 'admin', name: 'Admin' },
-          message: 'Admin login successful'
-        });
-      } else {
-        res.status(401).json({ message: 'Invalid admin credentials' });
+      // MongoDB Admin login
+      const admin = await Admin.findOne({ email: normEmail });
+      
+      if (!admin) {
+        // Create default admin if doesn't exist
+        if (normEmail === 'karatesubhash455@gmail.com' && password === 'karate@123') {
+          const newAdmin = new Admin({
+            name: 'Admin',
+            email: normEmail,
+            password: 'karate@123'
+          });
+          await newAdmin.save();
+          
+          const token = jwt.sign(
+            { email, role: 'admin', name: 'Admin' },
+            JWT_SECRET,
+            { expiresIn: '24h' }
+          );
+          return res.json({
+            success: true,
+            token,
+            user: { email, role: 'admin', name: 'Admin' },
+            message: 'Admin login successful'
+          });
+        }
+        return res.status(401).json({ message: 'Invalid admin credentials' });
       }
+      
+      const isMatch = await admin.comparePassword(password);
+      if (!isMatch) {
+        return res.status(401).json({ message: 'Invalid admin credentials' });
+      }
+      
+      const token = jwt.sign(
+        { email, role: 'admin', name: admin.name },
+        JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+      res.json({
+        success: true,
+        token,
+        user: { email, role: 'admin', name: admin.name },
+        message: 'Admin login successful'
+      });
     } else if (role === 'student') {
-      // Check if student exists in student_registrations table with verified email
-      const students = await query('SELECT * FROM student_registrations WHERE email = ? AND email_verified = TRUE', [normEmail]);
+      // MongoDB Student login
+      const student = await Student.findOne({ email: normEmail, active: true });
       
-      if (students.length === 0) {
-        return res.status(401).json({ message: 'Student not found or email not verified. Please register first.' });
+      if (!student) {
+        return res.status(401).json({ message: 'Student not found. Please register first.' });
       }
       
-      const student = students[0];
-      
-      // Check batch-based password
-      const expectedPassword = `karate@${student.batch}`;
-      if (password === expectedPassword) {
-        const token = jwt.sign(
-          { 
-            email: student.email, 
-            role: 'student', 
-            name: `${student.first_name} ${student.last_name}`,
-            studentId: student.id,
-            batch: student.batch
-          },
-          JWT_SECRET,
-          { expiresIn: '24h' }
-        );
-        res.json({
-          success: true,
-          token,
-          user: { 
-            email: student.email, 
-            role: 'student', 
-            name: `${student.first_name} ${student.last_name}`,
-            studentId: student.id,
-            batch: student.batch
-          },
-          message: 'Student login successful'
-        });
-      } else {
-        res.status(401).json({ message: 'Invalid password. Use: karate@' + student.batch });
+      const isMatch = await student.comparePassword(password);
+      if (!isMatch) {
+        return res.status(401).json({ message: 'Invalid password' });
       }
+      
+      const token = jwt.sign(
+        { 
+          email: student.email, 
+          role: 'student', 
+          name: student.fullName,
+          studentId: student._id,
+          batch: student.batch
+        },
+        JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+      res.json({
+        success: true,
+        token,
+        user: { 
+          email: student.email, 
+          role: 'student', 
+          name: student.fullName,
+          studentId: student._id,
+          batch: student.batch
+        },
+        message: 'Student login successful'
+      });
     } else {
       res.status(400).json({ message: 'Invalid role specified' });
     }
@@ -2256,94 +2228,77 @@ app.post('/api/delete-student-registration', async (req, res) => {
   }
 });
 
-// -------- Student Registration --------
+// -------- Student Registration (MongoDB with bcrypt) --------
 app.post('/api/student-register', async (req, res) => {
-  // Set timeout for this request
   req.setTimeout(30000);
   
   try {
     console.log('📝 Student registration request received:', req.body);
     
-    const { firstName, lastName, email, phone, batch } = req.body;
+    const { firstName, lastName, email, phone, batch, centre, password } = req.body;
     const f = String(firstName || '').trim();
     const l = String(lastName || '').trim();
     const e = String(email || '').trim().toLowerCase();
     const p = String(phone || '').replace(/\D/g, '');
     const b = String(batch || '').trim();
+    const c = String(centre || '').trim();
+    const pwd = String(password || '').trim();
 
-    console.log('📝 Parsed values:', { f, l, e, p, b, dbType: module.exports.dbType });
+    console.log('📝 Parsed values:', { f, l, e, p, b, c });
 
-    if (!f || !l || !e || !p || !b) {
+    if (!f || !l || !e || !p || !b || !c) {
       console.log('❌ Missing required fields');
       return res.status(400).json({ message: 'All fields are required' });
     }
     
-    // Generate verification token
-    const verificationToken = uuidv4();
-    console.log('📝 Generated verification token:', verificationToken);
-    
     // Check if email already exists
-    console.log('📝 Checking for existing email:', e);
-    const existing = await query('SELECT * FROM student_registrations WHERE email = ?', [e]);
-    console.log('📝 Existing check result:', existing.length, 'records found');
-    
-    let studentId;
-    if (existing.length > 0) {
-      const existingStudent = existing[0];
-      if (existingStudent.email_verified) {
-        return res.status(409).json({ message: 'Email already registered. Please login instead.' });
-      }
-      // Update existing unverified record
-      await query(
-        module.exports.dbType === 'sqlite' 
-          ? 'UPDATE student_registrations SET first_name = ?, last_name = ?, phone = ?, batch = ?, verification_token = ?, verification_sent_at = datetime("now") WHERE id = ?'
-          : 'UPDATE student_registrations SET first_name = ?, last_name = ?, phone = ?, batch = ?, verification_token = ?, verification_sent_at = NOW() WHERE id = ?',
-        [f, l, p, b, verificationToken, existingStudent.id]
-      );
-      studentId = existingStudent.id;
-    } else {
-      // Insert new student registration
-      const result = await query(
-        module.exports.dbType === 'sqlite'
-          ? 'INSERT INTO student_registrations (first_name, last_name, email, phone, batch, email_verified, verification_token, verification_sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime("now"))'
-          : 'INSERT INTO student_registrations (first_name, last_name, email, phone, batch, email_verified, verification_token, verification_sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())',
-        [f, l, e, p, b, false, verificationToken]
-      );
-      studentId = result.insertId;
+    const existing = await Student.findOne({ email: e });
+    if (existing) {
+      return res.status(409).json({ message: 'Email already registered. Please login instead.' });
     }
     
-    const inserted = await query('SELECT * FROM student_registrations WHERE id = ?', [studentId]);
+    // Create new student with bcrypt password
+    const student = new Student({
+      fullName: `${f} ${l}`,
+      email: e,
+      phone: p,
+      batch: b,
+      centre: c,
+      password: pwd || 'karate@123' // Default password if not provided
+    });
     
-    // Send verification email (non-blocking with timeout)
-    const verificationLink = `${req.protocol}://${req.get('host')}/verify-student-email?token=${verificationToken}&email=${encodeURIComponent(e)}`;
+    await student.save();
+    
+    // Send welcome email (non-blocking)
     const mailOptions = {
       to: e,
       from: EMAIL_USER,
-      subject: 'Verify your Student Account - WTSKF-GOA',
+      subject: 'Welcome to WTSKF-GOA Karate!',
       html: `
         <html>
         <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
           <h2>Welcome to WTSKF-GOA Karate!</h2>
           <p>Hello ${f} ${l},</p>
-          <p>Thank you for registering. Please verify your email by clicking the link below:</p>
-          <p><a href="${verificationLink}" style="padding: 10px 20px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px;">Verify Email</a></p>
-          <p>Or copy this link: ${verificationLink}</p>
-          <p>Your login details will be sent after verification.</p>
+          <p>Your registration is successful!</p>
+          <p><strong>Login Details:</strong></p>
+          <p>Email: ${e}</p>
+          <p>Password: ${pwd || 'karate@123'}</p>
+          <p>Centre: ${c}</p>
+          <p>Batch: ${b}</p>
+          <p>Please login to access your dashboard.</p>
         </body>
         </html>
       `
     };
     
-    // Send email in background - don't block registration response
-    console.log('📧 Starting email send to:', e);
     sendMail(mailOptions)
-      .then(() => console.log('✅ Email SENT SUCCESSFULLY to:', e))
+      .then(() => console.log('✅ Welcome email SENT to:', e))
       .catch(err => console.error('❌ Email FAILED:', err.message));
     
-    // Return success immediately - don't wait for email
     res.status(201).json({
-      ...inserted[0],
-      message: 'Registration successful! Please check your email to verify your account.'
+      success: true,
+      studentId: student._id,
+      message: 'Registration successful! Please login with your credentials.'
     });
   } catch (err) {
     console.error('POST /api/student-register error:', err.message);
@@ -2645,6 +2600,16 @@ process.on('uncaughtException', (err) => {
   console.error('Uncaught exception:', err);
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Karate admin backend running on http://0.0.0.0:${PORT}`);
+// Start server
+const startServer = async () => {
+  await connectDB();
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Karate admin backend running on http://0.0.0.0:${PORT}`);
+    console.log('MongoDB is the primary database');
+  });
+};
+
+startServer().catch(err => {
+  console.error('Failed to start server:', err);
+  process.exit(1);
 });
