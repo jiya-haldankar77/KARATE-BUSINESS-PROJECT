@@ -653,102 +653,74 @@ if (nodemailer && EMAIL_USER && EMAIL_PASS) {
   console.log('✅ Gmail SMTP transporter configured');
 }
 
-const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || '';
-if (SENDGRID_API_KEY) {
-  try { if (sgMail) sgMail.setApiKey(SENDGRID_API_KEY); } catch (_) {}
-}
-
 async function sendMail(mailOptions) {
-  console.log('📧 sendMail CALLED with:', { to: mailOptions.to, subject: mailOptions.subject });
-  console.log('📧 Transporter status:', {
-    brevoTransporter: !!brevoTransporter,
-    brevo: !!brevo,
-    gmailTransporter: !!gmailTransporter,
-    BREVO_API_KEY: !!BREVO_API_KEY,
-    BREVO_SMTP_KEY: !!BREVO_SMTP_KEY,
-    SENDGRID_API_KEY: !!SENDGRID_API_KEY
-  });
+  const to = mailOptions && mailOptions.to;
+  const subject = mailOptions && mailOptions.subject;
+  console.log('📧 sendMail CALLED with:', { to, subject });
 
-  // 1. Try Brevo SMTP first
+  // 1) Prefer Brevo API when API key is present (user uses API key, not SMTP)
+  if (brevo && BREVO_API_KEY) {
+    try {
+      const apiInstance = new brevo.TransactionalEmailsApi();
+      const payload = {
+        sender: {
+          email: mailOptions.from || EMAIL_USER || 'karatesubhash455@gmail.com',
+          name: 'WTSKF-GOA'
+        },
+        to: [{ email: to }],
+        subject: subject,
+        htmlContent: mailOptions.html || ''
+      };
+      const result = await apiInstance.sendTransacEmail(payload);
+      const messageId = result && (result.messageId || result['messageId']);
+      console.log('✅ Email sent via Brevo API:', { to, messageId });
+      return { provider: 'brevo_api', messageId, raw: result };
+    } catch (e) {
+      console.error('❌ Brevo API send error:', e && e.message ? e.message : e);
+    }
+  }
+
+  // 2) Fallback: Brevo SMTP
   if (brevoTransporter) {
-    console.log('✅ Using Brevo SMTP for email to:', mailOptions.to);
     try {
       const info = await Promise.race([
         brevoTransporter.sendMail({
           from: `"WTSKF-GOA" <${mailOptions.from || EMAIL_USER || 'karatesubhash455@gmail.com'}>`,
-          to: mailOptions.to,
-          subject: mailOptions.subject,
+          to: to,
+          subject: subject,
           html: mailOptions.html,
           text: mailOptions.text || 'Please view this email in an HTML-capable client.'
         }),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Brevo SMTP timeout')), 15000))
       ]);
-      console.log('✅ BREVO EMAIL SENT! MessageId:', info.messageId);
-      return info;
+      console.log('✅ Email sent via Brevo SMTP:', { to, messageId: info && info.messageId });
+      return { provider: 'brevo_smtp', messageId: info && info.messageId, raw: info };
     } catch (e) {
-      console.error('❌ Brevo SMTP send error:', e.message);
-      console.error('Full error:', e);
-      // Continue to fallback
-    }
-  } else {
-    console.log('❌ brevoTransporter is NULL - cannot use Brevo SMTP');
-  }
-
-  // 2. Fallback: Brevo API
-  if (brevo && BREVO_API_KEY) {
-    console.log('Using Brevo API for email');
-    try {
-      const apiInstance = new brevo.TransactionalEmailsApi();
-      const sendSmtpEmail = {
-        sender: { email: mailOptions.from || EMAIL_USER || 'karatesubhash455@gmail.com', name: 'WTSKF-GOA' },
-        to: [{ email: mailOptions.to }],
-        subject: mailOptions.subject,
-        htmlContent: mailOptions.html
-      };
-      const result = await apiInstance.sendTransacEmail(sendSmtpEmail);
-      console.log('✅ Email sent successfully via Brevo API to:', mailOptions.to, 'MessageId:', result.messageId);
-      return;
-    } catch (e) {
-      console.error('❌ Brevo API send error:', e.message);
-      // Continue to fallback
+      console.error('❌ Brevo SMTP send error:', e && e.message ? e.message : e);
     }
   }
 
-  // 3. Final fallback: Gmail SMTP
+  // 3) Fallback: Gmail SMTP
   if (gmailTransporter) {
-    console.log('Using Gmail SMTP for email');
     try {
       const info = await Promise.race([
         gmailTransporter.sendMail({
           from: `"WTSKF-GOA" <${mailOptions.from || EMAIL_USER}>`,
-          to: mailOptions.to,
-          subject: mailOptions.subject,
+          to: to,
+          subject: subject,
           html: mailOptions.html,
           text: mailOptions.text || 'Please view this email in an HTML-capable client.'
         }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Gmail timeout')), 10000))
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Gmail SMTP timeout')), 15000))
       ]);
-      console.log('✅ Email sent successfully via Gmail SMTP to:', mailOptions.to, 'MessageId:', info.messageId);
-      return;
+      console.log('✅ Email sent via Gmail SMTP:', { to, messageId: info && info.messageId });
+      return { provider: 'gmail_smtp', messageId: info && info.messageId, raw: info };
     } catch (e) {
-      console.error('❌ Gmail SMTP send error:', e.message);
-      // Continue to fallback
+      console.error('❌ Gmail SMTP send error:', e && e.message ? e.message : e);
     }
   }
-  
-  // 3. Try SendGrid (fallback)
-  if (SENDGRID_API_KEY && sgMail) {
-    console.log('Using SendGrid for email');
-    try {
-      await sgMail.send(mailOptions);
-      console.log('✅ Email sent successfully via SendGrid to:', mailOptions.to);
-      return;
-    } catch (e) {
-      console.error('❌ SendGrid send error:', e);
-    }
-  }
-  
-  console.log('❌ No email service available - email NOT sent to:', mailOptions.to);
+
+  throw new Error('No email provider configured');
 }
 
 // Database configuration
