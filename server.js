@@ -37,6 +37,7 @@ const Announcement = require('./models/Announcement');
 const StoreOrder = require('./models/StoreOrder');
 const TournamentRegistration = require('./models/TournamentRegistration');
 const Exam = require('./models/Exam');
+const Admission = require('./models/Admission');
 
 // Connect to MongoDB
 const connectDB = async () => {
@@ -121,6 +122,13 @@ async function seedMockData() {
       { title: 'Exam Schedule', message: 'Upgrading exams will be held on June 30th. Please prepare accordingly.' }
     ]);
     console.log('✅ Mock announcements seeded');
+    // Seed admissions
+    await Admission.deleteMany({});
+    await Admission.create([
+      { first_name: 'John', last_name: 'Doe', email: 'john.doe@example.com', phone: '9876543210', age: 25, belt_level: 'White', address: '123 Main St', centre: 'Panaji', batch_timing: '6:00 AM - 8:00 AM', photo_url: '' },
+      { first_name: 'Jane', last_name: 'Smith', email: 'jane.smith@example.com', phone: '9876543211', age: 20, belt_level: 'Yellow', address: '456 Oak Ave', centre: 'Mapusa', batch_timing: '6:00 PM - 8:00 PM', photo_url: '' }
+    ]);
+    console.log('✅ Mock admissions seeded');
     console.log('🌱 Mock data seeding complete');
   } catch (e) {
     console.error('seedMockData error:', e);
@@ -1442,8 +1450,8 @@ app.delete('/api/batches/:id', verifyToken, requireAdmin, async (req, res) => {
 // -------- Admissions --------
 app.get('/api/admissions', async (req, res) => {
   try {
-    const rows = await query('SELECT * FROM admissions ORDER BY created_at DESC');
-    res.json(rows);
+    const admissions = await Admission.find({}).sort({ created_at: -1 }).lean();
+    res.json(admissions);
   } catch (err) {
     console.error('GET /api/admissions error', err);
     res.status(500).json({ message: 'Error fetching admissions' });
@@ -1466,7 +1474,6 @@ app.post('/api/admissions', async (req, res) => {
     const bt = String(batch_timing || '').trim();
     const pu = photo_url || '';
     
-    // Log the received data
     console.log('Processed admission data:', {
       first_name: fn,
       last_name: ln,
@@ -1480,7 +1487,6 @@ app.post('/api/admissions', async (req, res) => {
       photo_url: pu
     });
     
-    // Validate required fields
     const requiredFields = {
       'First Name': fn,
       'Last Name': ln,
@@ -1505,153 +1511,48 @@ app.post('/api/admissions', async (req, res) => {
       });
     }
     
-    // Convert empty strings to NULL for numeric fields
-    const ageValue = ag;
+    const admission = new Admission({
+      first_name: fn,
+      last_name: ln,
+      email: em,
+      phone: ph,
+      age: ag,
+      belt_level: bl,
+      address: ad,
+      centre: ce,
+      batch_timing: bt,
+      photo_url: pu
+    });
     
-    try {
-      console.log('Attempting to insert into database...');
-      let result;
-      if (module.exports.dbType === 'postgresql') {
-        result = await query(
-          'INSERT INTO admissions (first_name, last_name, email, phone, age, belt_level, address, centre, batch_timing, photo_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [fn, ln, em, ph, ageValue, bl, ad, ce, bt, pu]
-        );
-      } else {
-        result = await query(
-          'INSERT INTO admissions (first_name, last_name, email, phone, age, belt_level, address, centre, batch_timing, photo_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [fn, ln, em, ph, ageValue, bl, ad, ce, bt, pu]
-        );
-      }
-      console.log('Insert result:', JSON.stringify(result, null, 2));
-
-      if (!result.insertId) {
-        // Likely a race condition or driver didn't return insertId.
-        // Attempt to fetch existing record and treat as success for idempotency.
-        try {
-          let existing = await query('SELECT * FROM admissions WHERE email = ? LIMIT 1', [em]);
-          if (Array.isArray(existing) && existing.length > 0) {
-            return res.status(201).json({
-              ...existing[0],
-              message: 'Admission Successful'
-            });
-          }
-          existing = await query('SELECT * FROM admissions WHERE phone = ? LIMIT 1', [ph]);
-          if (Array.isArray(existing) && existing.length > 0) {
-            return res.status(201).json({
-              ...existing[0],
-              message: 'Admission Successful'
-            });
-          }
-        } catch (lookupErr) {
-          console.error('Lookup after insertId missing failed:', lookupErr);
-        }
-        return res.status(201).json({ message: 'Admission Successful' });
-      }
-
-      const [inserted] = await query('SELECT * FROM admissions WHERE id = ?', [result.insertId]);
-      console.log('Retrieved inserted record:', JSON.stringify(inserted, null, 2));
+    await admission.save();
+    console.log('Admission saved to MongoDB:', admission.id);
     
-    // Respond success without any email flow
     res.status(201).json({
-      ...inserted,
+      ...admission.toJSON(),
       message: 'Admission Successful'
     });
-    } catch (dbError) {
-      console.error('Database error in admission submission:', {
-        error: dbError,
-        code: dbError.code,
-        sqlMessage: dbError.sqlMessage,
-        sql: dbError.sql
-      });
-
-      // Gracefully handle duplicate registration (idempotent behavior)
-      const dup = (dbError && (
-        dbError.code === '23505' || // PostgreSQL unique_violation
-        dbError.code === 'ER_DUP_ENTRY' || // MySQL duplicate
-        /duplicate key value/i.test(dbError.message || '') ||
-        /Duplicate entry/i.test(dbError.sqlMessage || '')
-      ));
-
-      if (dup) {
-        try {
-          // Attempt idempotent success: fetch existing by email or phone
-          let existing = await query('SELECT * FROM admissions WHERE email = ? LIMIT 1', [em]);
-          if (Array.isArray(existing) && existing.length > 0) {
-            return res.status(201).json({
-              ...existing[0],
-              message: 'Admission Successful'
-            });
-          }
-          existing = await query('SELECT * FROM admissions WHERE phone = ? LIMIT 1', [ph]);
-          if (Array.isArray(existing) && existing.length > 0) {
-            return res.status(201).json({
-              ...existing[0],
-              message: 'Admission Successful'
-            });
-          }
-          // If we couldn't find it, fall back to conflict message
-          let conflict = 'email';
-          const detail = String(dbError.detail || dbError.sqlMessage || '');
-          if (/\bphone\b/i.test(detail)) conflict = 'phone';
-          return res.status(201).json({ message: 'Admission Successful' });
-        } catch (dupHandleErr) {
-          console.error('Error handling duplicate admission gracefully:', dupHandleErr);
-        }
-      }
-
-      // If not handled above, bubble up to outer error handler
-      throw dbError; // This will be caught by the outer catch block
-    }
   } catch (err) {
-    console.error('POST /api/admissions error:', {
-      message: err.message,
-      stack: err.stack,
-      code: err.code,
-      sqlMessage: err.sqlMessage,
-      sql: err.sql
-    });
+    console.error('POST /api/admissions error:', err);
     
-    // Idempotent success on duplicate errors even if they bubble here
-    if (err.code === 'ER_DUP_ENTRY' || err.code === '23505' || (err.message && /duplicate key value/i.test(err.message))) {
-      try {
-        let existing = await query('SELECT * FROM admissions WHERE email = ? LIMIT 1', [em]);
-        if (Array.isArray(existing) && existing.length > 0) {
-          return res.status(201).json({
-            ...existing[0],
-            message: 'Admission Successful'
-          });
-        }
-        existing = await query('SELECT * FROM admissions WHERE phone = ? LIMIT 1', [ph]);
-        if (Array.isArray(existing) && existing.length > 0) {
-          return res.status(201).json({
-            ...existing[0],
-            message: 'Admission Successful'
-          });
-        }
-      } catch (_) {}
-      return res.status(201).json({ message: 'Admission Successful' });
+    if (err.code === 11000) {
+      const existing = await Admission.findOne({ email: em });
+      if (existing) {
+        return res.status(201).json({
+          ...existing.toJSON(),
+          message: 'Admission Successful'
+        });
+      }
     }
-
-    let errorMessage = 'Error creating admission';
-    if (err.code === '22001' || (err.message && /value too long/i.test(err.message))) {
-      errorMessage = 'Photo or text too large. Please upload a smaller image or shorten the field.';
-    } else if (err.sqlMessage) {
-      errorMessage = `Database error: ${err.sqlMessage}`;
-    }
-
-    const status = (err.code === '22001' || (err.message && /value too long/i.test(err.message))) ? 413 : 500;
-    res.status(status).json({
-      message: errorMessage,
-      error: process.env.NODE_ENV === 'development' ? err.message : undefined
-    });
+    
+    res.status(500).json({ message: 'Error creating admission: ' + err.message });
   }
 });
 
 app.delete('/api/admissions/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await query('DELETE FROM admissions WHERE id = ?', [id]);
-    if (result.affectedRows === 0) return res.status(404).json({ message: 'Admission not found' });
+    const result = await Admission.findByIdAndDelete(id);
+    if (!result) return res.status(404).json({ message: 'Admission not found' });
     res.json({ success: true });
   } catch (err) {
     console.error('DELETE /api/admissions/:id error', err);
