@@ -215,6 +215,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-producti
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
 app.use(express.static(path.join(__dirname)));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use('/files', express.static(path.join(__dirname, 'data')));
 
 // -------- Data directories --------
@@ -1329,13 +1330,17 @@ app.post('/api/instructors', verifyToken, requireAdmin, instructorsUpload.single
     
     if (!name) return res.status(400).json({ message: 'Name is required' });
     
-    // Handle photo: use uploaded file path or empty
+    // Handle photo: store as base64 data URL in MongoDB so it survives redeploys
     let finalPhotoUrl = '';
     if (req.file) {
-      const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
-      const host = req.headers.host || req.get('host') || 'karate-admin-backend.onrender.com';
-      finalPhotoUrl = `${protocol}://${host}/uploads/instructors/${req.file.filename}`;
-      console.log('Photo uploaded to:', finalPhotoUrl);
+      try {
+        const mime = String(req.file.mimetype || 'image/jpeg');
+        const buf = fs.readFileSync(req.file.path);
+        finalPhotoUrl = `data:${mime};base64,${buf.toString('base64')}`;
+        try { fs.unlinkSync(req.file.path); } catch (_) {}
+      } catch (e) {
+        console.error('Failed to encode instructor photo:', e);
+      }
     }
     
     const instructor = new Instructor({
@@ -1354,19 +1359,35 @@ app.post('/api/instructors', verifyToken, requireAdmin, instructorsUpload.single
   }
 });
 
-app.put('/api/instructors/:id', verifyToken, requireAdmin, async (req, res) => {
+app.put('/api/instructors/:id', verifyToken, requireAdmin, instructorsUpload.single('photo'), async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description, rank, photo_url } = req.body;
-    
-    const instructor = await Instructor.findByIdAndUpdate(
-      id,
-      { name, description: description || '', beltLevel: rank || '', photoUrl: photo_url || '' },
-      { new: true }
-    );
-    
-    if (!instructor) return res.status(404).json({ message: 'Instructor not found' });
-    res.json(mapInstructor(instructor));
+
+    const existing = await Instructor.findById(id);
+    if (!existing) return res.status(404).json({ message: 'Instructor not found' });
+
+    let nextPhotoUrl = existing.photoUrl || '';
+    if (req.file) {
+      try {
+        const mime = String(req.file.mimetype || 'image/jpeg');
+        const buf = fs.readFileSync(req.file.path);
+        nextPhotoUrl = `data:${mime};base64,${buf.toString('base64')}`;
+        try { fs.unlinkSync(req.file.path); } catch (_) {}
+      } catch (e) {
+        console.error('Failed to encode instructor photo:', e);
+      }
+    } else if (typeof photo_url === 'string' && photo_url.trim() !== '') {
+      nextPhotoUrl = photo_url.trim();
+    }
+
+    existing.name = name || existing.name;
+    existing.description = description || '';
+    existing.beltLevel = rank || '';
+    existing.photoUrl = nextPhotoUrl;
+    await existing.save();
+
+    res.json(mapInstructor(existing));
   } catch (err) {
     console.error('PUT /api/instructors/:id error', err);
     res.status(500).json({ message: 'Error updating instructor' });
