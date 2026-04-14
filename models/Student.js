@@ -5,7 +5,7 @@ const StudentSchema = new mongoose.Schema({
   fullName: { type: String, required: true },
   email: { type: String, required: true, unique: true },
   phone: { type: String, required: true },
-  password: { type: String, required: true },
+  passwordHash: { type: String, required: true },
   dateOfBirth: { type: String, default: '' },
   beltLevel: { type: String, default: 'White' },
   centre: { type: String, default: '' },
@@ -17,15 +17,8 @@ const StudentSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
-StudentSchema.pre('save', async function(next) {
-  if (!this.isModified('password')) return next();
-  this.password = await bcrypt.hash(this.password, 10);
-  next();
-});
-
 StudentSchema.methods.comparePassword = async function(candidatePassword) {
-  if (!this.password || !candidatePassword) return false;
-  return await bcrypt.compare(candidatePassword, this.password);
+  return await bcrypt.compare(candidatePassword, this.passwordHash);
 };
 
 module.exports = mongoose.model('Student', StudentSchema);

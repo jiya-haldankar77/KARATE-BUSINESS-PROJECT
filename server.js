@@ -34,6 +34,9 @@ const Tournament = require('./models/Tournament');
 const StoreItem = require('./models/StoreItem');
 const FeesPayment = require('./models/FeesPayment');
 const Announcement = require('./models/Announcement');
+const StoreOrder = require('./models/StoreOrder');
+const TournamentRegistration = require('./models/TournamentRegistration');
+const Exam = require('./models/Exam');
 
 // Connect to MongoDB
 const connectDB = async () => {
@@ -50,6 +53,142 @@ const connectDB = async () => {
     return false;
   }
 };
+
+async function ensureDefaultAdmin() {
+  const email = String(process.env.ADMIN_EMAIL || 'karatesubhash455@gmail.com').trim().toLowerCase();
+  const password = String(process.env.ADMIN_PASSWORD || 'karate@123').trim();
+  if (!email || !password) return;
+  try {
+    let admin = await Admin.findOne({ email });
+    if (!admin) {
+      const passwordHash = await bcrypt.hash(password, 10);
+      admin = new Admin({
+        name: 'Admin',
+        email,
+        passwordHash
+      });
+      await admin.save();
+      console.log('✅ Default admin created:', email);
+    } else if (!admin.passwordHash) {
+      const passwordHash = await bcrypt.hash(password, 10);
+      admin.passwordHash = passwordHash;
+      await admin.save();
+      console.log('✅ Admin passwordHash updated:', email);
+    }
+  } catch (e) {
+    console.error('ensureDefaultAdmin error:', e);
+  }
+}
+
+async function seedMockData() {
+  if (process.env.SEED_MOCK_DATA !== 'true') return;
+  console.log('🌱 Seeding mock data...');
+  try {
+    // Seed instructors
+    await Instructor.deleteMany({});
+    await Instructor.create([
+      { name: 'Sensei John', description: 'Head Instructor', beltLevel: 'Black Belt 5th Dan', photoUrl: '', active: true },
+      { name: 'Sensei Mary', description: 'Senior Instructor', beltLevel: 'Black Belt 3rd Dan', photoUrl: '', active: true }
+    ]);
+    console.log('✅ Mock instructors seeded');
+    // Seed batches
+    await Batch.deleteMany({});
+    await Batch.create([
+      { name: 'Batch 1', description: 'Morning batch', timing: '6:00 AM - 8:00 AM', centre: 'Panaji', active: true },
+      { name: 'Batch 2', description: 'Evening batch', timing: '6:00 PM - 8:00 PM', centre: 'Mapusa', active: true },
+      { name: 'Batch Guirim', description: 'Weekend batch', timing: 'Sat & Sun 10:00 AM - 12:00 PM', centre: 'Guirim', active: true }
+    ]);
+    console.log('✅ Mock batches seeded');
+    // Seed tournaments
+    await Tournament.deleteMany({});
+    await Tournament.create([
+      { name: 'State Championship 2025', description: 'Annual state-level tournament', date: new Date('2025-06-15'), venue: 'Panaji Gymkhana', active: true },
+      { name: 'National Qualifiers', description: 'Qualifying round for nationals', date: new Date('2025-08-20'), venue: 'Margao Sports Complex', active: true }
+    ]);
+    console.log('✅ Mock tournaments seeded');
+    // Seed store items
+    await StoreItem.deleteMany({});
+    await StoreItem.create([
+      { name: 'Karate Gi (White)', description: 'Standard uniform', price: 1500, imageUrl: '', category: 'uniform', stock: 50, active: true },
+      { name: 'Belt (Red)', description: 'Red belt for advanced students', price: 200, imageUrl: '', category: 'accessories', stock: 30, active: true },
+      { name: 'Training Gloves', description: 'Sparring gloves', price: 800, imageUrl: '', category: 'equipment', stock: 25, active: true }
+    ]);
+    console.log('✅ Mock store items seeded');
+    // Seed announcements
+    await Announcement.deleteMany({});
+    await Announcement.create([
+      { title: 'Welcome', message: 'Welcome to the new student portal! Please register to access your dashboard.' },
+      { title: 'Exam Schedule', message: 'Upgrading exams will be held on June 30th. Please prepare accordingly.' }
+    ]);
+    console.log('✅ Mock announcements seeded');
+    console.log('🌱 Mock data seeding complete');
+  } catch (e) {
+    console.error('seedMockData error:', e);
+  }
+}
+
+function mapInstructor(doc) {
+  if (!doc) return doc;
+  return {
+    id: String(doc._id),
+    name: doc.name,
+    description: doc.description || '',
+    rank: doc.beltLevel || '',
+    photo_url: doc.photoUrl || '',
+    active: doc.active,
+    created_at: doc.createdAt
+  };
+}
+
+function mapBatch(doc) {
+  if (!doc) return doc;
+  return {
+    id: String(doc._id),
+    name: doc.name,
+    description: doc.description || '',
+    timing: doc.timing || '',
+    centre: doc.centre || '',
+    active: doc.active,
+    created_at: doc.createdAt
+  };
+}
+
+function mapTournament(doc) {
+  if (!doc) return doc;
+  return {
+    id: String(doc._id),
+    title: doc.name,
+    location: doc.venue || '',
+    date: (doc.date instanceof Date) ? doc.date.toISOString().slice(0, 10) : String(doc.date || ''),
+    description: doc.description || '',
+    active: doc.active,
+    created_at: doc.createdAt
+  };
+}
+
+function mapStoreItem(doc) {
+  if (!doc) return doc;
+  return {
+    id: String(doc._id),
+    name: doc.name,
+    description: doc.description || '',
+    price: doc.price,
+    image_url: doc.imageUrl || '',
+    active: doc.active,
+    created_at: doc.createdAt
+  };
+}
+
+function requireAdmin(req, res, next) {
+  try {
+    if (!req.user || req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+    return next();
+  } catch (e) {
+    return res.status(403).json({ message: 'Admin access required' });
+  }
+}
 
 mongoose.connection.on('error', (err) => {
   console.error('MongoDB runtime error:', err);
@@ -247,44 +386,36 @@ app.post('/api/resend-student-verification', async (req, res) => {
     const e = String(email || '').trim().toLowerCase();
     if (!e) return res.status(400).json({ message: 'Email is required' });
 
-    const rows = await query('SELECT * FROM student_registrations WHERE email = ?', [e]);
-    if (!rows.length) return res.status(404).json({ message: 'No student registration found for this email' });
-    const s = rows[0];
-    if (s.email_verified) return res.status(409).json({ message: 'This email is already verified.' });
+    const student = await Student.findOne({ email: e, active: true });
+    if (!student) return res.status(404).json({ message: 'Student not found. Please register first.' });
 
-    let token = s.verification_token;
-    if (!token) {
-      token = uuidv4();
-      await query('UPDATE student_registrations SET verification_token = ?, verification_sent_at = NOW() WHERE id = ?', [token, s.id]);
-    }
-
-    const verificationLink = `${req.protocol}://${req.get('host')}/verify-student-email?token=${token}&email=${encodeURIComponent(e)}`;
     const mailOptions = {
       to: e,
       from: EMAIL_USER,
-      subject: 'Verify your email - WTSKF-GOA Student Registration',
+      subject: 'Your WTSKF-GOA Karate Registration Details',
       html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);">
-          <div style="text-align: center; margin-bottom: 30px;">
-            <h2 style="color: #d4af37; margin: 0;">WTSKF-GOA</h2>
-            <p style="color: #fff; margin: 5px 0;">World Traditional Shotokan Karate Federation - Goa</p>
-          </div>
-          <div style="background: rgba(255,255,255,0.1); padding: 30px; border-radius: 10px; border: 1px solid rgba(212,175,55,0.3);">
-            <h3 style="color: #fff; margin-top: 0;">Verify Your Student Account</h3>
-            <p style="color: #ddd; line-height: 1.6;">We have re-sent your verification link. Please click the button below to activate your account.</p>
-            <div style="text-align: center; margin: 30px 0;">
-              <a href="${verificationLink}" style="background: linear-gradient(135deg, #d4af37, #f4e4bc); color: #000; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Verify Student Account</a>
-            </div>
-            <p style="color: #aaa; font-size: 12px; word-break: break-all; text-align: center;">${verificationLink}</p>
-          </div>
-        </div>
+        <html>
+        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <h2>Registration Details</h2>
+          <p>Hello ${student.fullName || 'Student'},</p>
+          <p>This is a confirmation that your student account exists.</p>
+          <p><strong>Email:</strong> ${student.email}</p>
+          <p><strong>Centre:</strong> ${student.centre || ''}</p>
+          <p><strong>Batch:</strong> ${student.batch || ''}</p>
+          <p>You can login from the website using your password.</p>
+        </body>
+        </html>
       `
     };
-    await sendMail(mailOptions);
-    res.status(200).json({ message: 'Verification link sent to your email.' });
+
+    sendMail(mailOptions)
+      .then(() => console.log('✅ Student email re-sent to:', e))
+      .catch(err => console.error('❌ Student resend email failed:', err.message));
+
+    res.json({ success: true, message: 'Email sent. Please check your inbox.' });
   } catch (err) {
-    console.error('Resend student verification error:', err);
-    res.status(500).json({ message: 'Failed to send verification email' });
+    console.error('POST /api/resend-student-verification error:', err);
+    res.status(500).json({ message: 'Error sending email' });
   }
 });
 
@@ -650,7 +781,7 @@ if (process.env.DATABASE_URL) {
     });
     module.exports.pool = cloudPool;
     module.exports.dbType = 'postgresql';
-    try { const u = new URL(rawUrl); console.log('DB selected:', 'postgresql', '@', u.hostname); } catch (_) { console.log('DB selected:', 'postgresql'); }
+    console.log('✅ PostgreSQL database initialized at:', rawUrl);
   } else if (protocol.startsWith('mysql')) {
     const u = new URL(rawUrl);
     const cloudPool = mysql.createPool({
@@ -665,11 +796,11 @@ if (process.env.DATABASE_URL) {
     });
     module.exports.pool = cloudPool;
     module.exports.dbType = 'mysql';
-    console.log('DB selected:', 'mysql', '@', u.hostname);
+    console.log('✅ MySQL database initialized at:', rawUrl);
   } else {
     module.exports.pool = pool;
     module.exports.dbType = 'mysql';
-    console.log('DB selected:', 'mysql (default local)');
+    console.log('✅ MySQL database initialized (default local)');
   }
 } else {
   module.exports.pool = pool;
@@ -691,7 +822,7 @@ async function initializeDatabase() {
         try { await client.query('ALTER TABLE IF EXISTS admissions ALTER COLUMN photo_url TYPE TEXT'); } catch (_) {}
         try { await client.query('DROP INDEX IF EXISTS uniq_admissions_email'); } catch (_) {}
         try { await client.query('DROP INDEX IF EXISTS uniq_admissions_phone'); } catch (_) {}
-        try { await client.query('ALTER TABLE student_registrations DROP CONSTRAINT IF EXISTS student_registrations_email_key'); } catch (_) {}
+        try { await client.query('ALTER TABLE IF EXISTS student_registrations DROP CONSTRAINT IF EXISTS student_registrations_email_key'); } catch (_) {}
         console.log('PostgreSQL schema ensured via schema_postgresql.sql');
         return;
       } finally {
@@ -1175,25 +1306,14 @@ async function invalidateCache(pattern) {
 app.get('/api/instructors', async (req, res) => {
   try {
     const instructors = await Instructor.find({ active: true }).sort({ createdAt: -1 });
-    res.json(
-      instructors.map(function (i) {
-        return {
-          id: String(i._id),
-          name: i.name,
-          description: i.description || '',
-          rank: i.beltLevel || '',
-          photo_url: i.photoUrl || '',
-          created_at: i.createdAt
-        };
-      })
-    );
+    res.json(instructors.map(mapInstructor));
   } catch (err) {
     console.error('GET /api/instructors error', err);
     res.status(500).json({ message: 'Error fetching instructors' });
   }
 });
 
-app.post('/api/instructors', instructorsUpload.single('photo'), async (req, res) => {
+app.post('/api/instructors', verifyToken, requireAdmin, instructorsUpload.single('photo'), async (req, res) => {
   try {
     const { name, description, rank } = req.body;
     console.log('POST /api/instructors - body:', req.body);
@@ -1219,14 +1339,14 @@ app.post('/api/instructors', instructorsUpload.single('photo'), async (req, res)
     await instructor.save();
     
     console.log('Instructor created:', instructor);
-    res.status(201).json(instructor);
+    res.status(201).json(mapInstructor(instructor));
   } catch (err) {
     console.error('POST /api/instructors error', err);
     res.status(500).json({ message: 'Error creating instructor: ' + err.message });
   }
 });
 
-app.put('/api/instructors/:id', async (req, res) => {
+app.put('/api/instructors/:id', verifyToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description, rank, photo_url } = req.body;
@@ -1238,14 +1358,14 @@ app.put('/api/instructors/:id', async (req, res) => {
     );
     
     if (!instructor) return res.status(404).json({ message: 'Instructor not found' });
-    res.json(instructor);
+    res.json(mapInstructor(instructor));
   } catch (err) {
     console.error('PUT /api/instructors/:id error', err);
     res.status(500).json({ message: 'Error updating instructor' });
   }
 });
 
-app.delete('/api/instructors/:id', async (req, res) => {
+app.delete('/api/instructors/:id', verifyToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const instructor = await Instructor.findByIdAndUpdate(id, { active: false }, { new: true });
@@ -1261,26 +1381,14 @@ app.delete('/api/instructors/:id', async (req, res) => {
 app.get('/api/batches', async (req, res) => {
   try {
     const batches = await Batch.find({ active: true }).sort({ createdAt: -1 });
-    res.json(
-      batches.map(function (b) {
-        return {
-          id: String(b._id),
-          name: b.name,
-          centre: b.centre || '',
-          timing: b.timing || '',
-          capacity: b.capacity,
-          instructor: b.instructor || '',
-          created_at: b.createdAt
-        };
-      })
-    );
+    res.json(batches.map(mapBatch));
   } catch (err) {
     console.error('GET /api/batches error', err);
     res.status(500).json({ message: 'Error fetching batches' });
   }
 });
 
-app.post('/api/batches', async (req, res) => {
+app.post('/api/batches', verifyToken, requireAdmin, async (req, res) => {
   try {
     const { name, description, timing, centre } = req.body;
     if (!name) return res.status(400).json({ message: 'Name is required' });
@@ -1293,14 +1401,14 @@ app.post('/api/batches', async (req, res) => {
     });
     await batch.save();
     
-    res.status(201).json(batch);
+    res.status(201).json(mapBatch(batch));
   } catch (err) {
     console.error('POST /api/batches error', err);
     res.status(500).json({ message: 'Error creating batch' });
   }
 });
 
-app.put('/api/batches/:id', async (req, res) => {
+app.put('/api/batches/:id', verifyToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description, timing, centre } = req.body;
@@ -1312,14 +1420,14 @@ app.put('/api/batches/:id', async (req, res) => {
     );
     
     if (!batch) return res.status(404).json({ message: 'Batch not found' });
-    res.json(batch);
+    res.json(mapBatch(batch));
   } catch (err) {
     console.error('PUT /api/batches/:id error', err);
     res.status(500).json({ message: 'Error updating batch' });
   }
 });
 
-app.delete('/api/batches/:id', async (req, res) => {
+app.delete('/api/batches/:id', verifyToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const batch = await Batch.findByIdAndUpdate(id, { active: false }, { new: true });
@@ -1634,25 +1742,14 @@ app.delete('/api/payments/:id', async (req, res) => {
 app.get('/api/tournaments', async (req, res) => {
   try {
     const tournaments = await Tournament.find({ active: true }).sort({ date: -1 });
-    res.json(
-      tournaments.map(function (t) {
-        return {
-          id: String(t._id),
-          title: t.name,
-          location: t.venue || '',
-          date: t.date,
-          description: t.description || '',
-          created_at: t.createdAt
-        };
-      })
-    );
+    res.json(tournaments.map(mapTournament));
   } catch (err) {
     console.error('GET /api/tournaments error', err);
     res.status(500).json({ message: 'Error fetching tournaments' });
   }
 });
 
-app.post('/api/tournaments', async (req, res) => {
+app.post('/api/tournaments', verifyToken, requireAdmin, async (req, res) => {
   try {
     const { title, location, date, description } = req.body;
     if (!title || !date) {
@@ -1666,15 +1763,15 @@ app.post('/api/tournaments', async (req, res) => {
       venue: location || ''
     });
     await tournament.save();
-    
-    res.status(201).json(tournament);
+
+    res.status(201).json(mapTournament(tournament));
   } catch (err) {
     console.error('POST /api/tournaments error', err);
     res.status(500).json({ message: 'Error creating tournament' });
   }
 });
 
-app.put('/api/tournaments/:id', async (req, res) => {
+app.put('/api/tournaments/:id', verifyToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { title, location, date, description } = req.body;
@@ -1691,14 +1788,14 @@ app.put('/api/tournaments/:id', async (req, res) => {
     );
     
     if (!tournament) return res.status(404).json({ message: 'Tournament not found' });
-    res.json(tournament);
+    res.json(mapTournament(tournament));
   } catch (err) {
     console.error('PUT /api/tournaments/:id error', err);
     res.status(500).json({ message: 'Error updating tournament' });
   }
 });
 
-app.delete('/api/tournaments/:id', async (req, res) => {
+app.delete('/api/tournaments/:id', verifyToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const tournament = await Tournament.findByIdAndUpdate(id, { active: false }, { new: true });
@@ -1714,75 +1811,14 @@ app.delete('/api/tournaments/:id', async (req, res) => {
 app.get('/api/store-items', async (req, res) => {
   try {
     const items = await StoreItem.find({ active: true }).sort({ createdAt: -1 });
-    res.json(
-      items.map(function (it) {
-        return {
-          id: String(it._id),
-          name: it.name,
-          description: it.description || '',
-          price: it.price,
-          created_at: it.createdAt
-        };
-      })
-    );
+    res.json(items.map(mapStoreItem));
   } catch (err) {
     console.error('GET /api/store-items error', err);
     res.status(500).json({ message: 'Error fetching store items' });
   }
 });
 
-// -------- Announcements (MongoDB) --------
-app.get('/api/announcements', async (req, res) => {
-  try {
-    const rows = await Announcement.find({}).sort({ created_at: -1 });
-    res.json(
-      rows.map(function (a) {
-        return {
-          id: String(a._id),
-          text: (a.title ? (a.title + ' - ') : '') + (a.message || ''),
-          created_at: a.created_at
-        };
-      })
-    );
-  } catch (err) {
-    console.error('GET /api/announcements error', err);
-    res.status(500).json({ message: 'Error fetching announcements' });
-  }
-});
-
-app.post('/api/announcements', verifyToken, async (req, res) => {
-  try {
-    if (!req.user || req.user.role !== 'admin') {
-      return res.status(403).json({ message: 'Admin access required' });
-    }
-    const { text } = req.body || {};
-    const t = String(text || '').trim();
-    if (!t) return res.status(400).json({ message: 'Text is required' });
-
-    const doc = await Announcement.create({ title: 'Announcement', message: t });
-    res.status(201).json({ id: String(doc._id), text: 'Announcement - ' + (doc.message || ''), created_at: doc.created_at });
-  } catch (err) {
-    console.error('POST /api/announcements error', err);
-    res.status(500).json({ message: 'Error creating announcement' });
-  }
-});
-
-app.delete('/api/announcements/:id', verifyToken, async (req, res) => {
-  try {
-    if (!req.user || req.user.role !== 'admin') {
-      return res.status(403).json({ message: 'Admin access required' });
-    }
-    const { id } = req.params;
-    const deleted = await Announcement.findByIdAndDelete(id);
-    if (!deleted) return res.status(404).json({ message: 'Announcement not found' });
-    res.json({ success: true });
-  } catch (err) {
-    console.error('DELETE /api/announcements/:id error', err);
-    res.status(500).json({ message: 'Error deleting announcement' });
-  }
-});
-
-app.post('/api/store-items', async (req, res) => {
+app.post('/api/store-items', verifyToken, requireAdmin, async (req, res) => {
   try {
     const { name, price, description } = req.body;
     if (!name || price == null) {
@@ -1795,15 +1831,15 @@ app.post('/api/store-items', async (req, res) => {
       description: description || ''
     });
     await item.save();
-    
-    res.status(201).json(item);
+
+    res.status(201).json(mapStoreItem(item));
   } catch (err) {
     console.error('POST /api/store-items error', err);
     res.status(500).json({ message: 'Error creating store item' });
   }
 });
 
-app.put('/api/store-items/:id', async (req, res) => {
+app.put('/api/store-items/:id', verifyToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, price, description } = req.body;
@@ -1815,14 +1851,14 @@ app.put('/api/store-items/:id', async (req, res) => {
     );
     
     if (!item) return res.status(404).json({ message: 'Store item not found' });
-    res.json(item);
+    res.json(mapStoreItem(item));
   } catch (err) {
     console.error('PUT /api/store-items/:id error', err);
     res.status(500).json({ message: 'Error updating store item' });
   }
 });
 
-app.delete('/api/store-items/:id', async (req, res) => {
+app.delete('/api/store-items/:id', verifyToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const item = await StoreItem.findByIdAndUpdate(id, { active: false }, { new: true });
@@ -1837,78 +1873,113 @@ app.delete('/api/store-items/:id', async (req, res) => {
 // -------- Exams --------
 app.get('/api/exams', async (req, res) => {
   try {
-    const rows = await query('SELECT * FROM exams ORDER BY date DESC');
-    res.json(rows);
+    const exams = await Exam.find({}).sort({ date: -1 });
+    res.json(exams.map(function (e) { return e.toJSON(); }));
   } catch (err) {
     console.error('GET /api/exams error', err);
     res.status(500).json({ message: 'Error fetching exams' });
   }
 });
 
-app.post('/api/exams', async (req, res) => {
+app.post('/api/exams', verifyToken, requireAdmin, async (req, res) => {
   try {
-    const { title, grade_info, date, belt } = req.body;
-    if (!title || !date || !belt) {
-      return res.status(400).json({ message: 'Title, date, and belt are required' });
+    const { title, date, location, description } = req.body;
+    if (!title || !date) {
+      return res.status(400).json({ message: 'Title and date are required' });
     }
     
-    // Format date for MySQL DATE column (YYYY-MM-DD)
-    let formattedDate = date;
-    if (date && typeof date === 'string') {
-      // Handle ISO date strings like '1903-01-25T18:38:50.000Z'
-      if (date.includes('T')) {
-        formattedDate = date.split('T')[0];
-      }
-    }
-    
-    const result = await query(
-      'INSERT INTO exams (title, grade_info, date, belt) VALUES (?, ?, ?, ?)',
-      [title, grade_info || '', formattedDate, belt]
-    );
-    const inserted = await query('SELECT * FROM exams WHERE id = ?', [result.insertId]);
-    res.status(201).json(inserted[0]);
+    const exam = new Exam({
+      title: String(title),
+      date: new Date(date),
+      location: String(location || ''),
+      description: String(description || '')
+    });
+    await exam.save();
+    res.status(201).json(exam.toJSON());
   } catch (err) {
     console.error('POST /api/exams error', err);
     res.status(500).json({ message: 'Error creating exam' });
   }
 });
 
-app.put('/api/exams/:id', async (req, res) => {
+app.put('/api/exams/:id', verifyToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, grade_info, date, belt } = req.body;
-    
-    // Format date for MySQL DATE column (YYYY-MM-DD)
-    let formattedDate = date;
-    if (date && typeof date === 'string') {
-      // Handle ISO date strings like '1903-01-25T18:38:50.000Z'
-      if (date.includes('T')) {
-        formattedDate = date.split('T')[0];
-      }
+    const { title, date, location, description } = req.body;
+    if (!title || !date) {
+      return res.status(400).json({ message: 'Title and date are required' });
     }
-    
-    const result = await query(
-      'UPDATE exams SET title = ?, grade_info = ?, date = ?, belt = ? WHERE id = ?',
-      [title, grade_info, formattedDate, belt, id]
+
+    const updated = await Exam.findByIdAndUpdate(
+      id,
+      {
+        title: String(title),
+        date: new Date(date),
+        location: String(location || ''),
+        description: String(description || '')
+      },
+      { new: true }
     );
-    if (result.affectedRows === 0) return res.status(404).json({ message: 'Exam not found' });
-    const updated = await query('SELECT * FROM exams WHERE id = ?', [id]);
-    res.json(updated[0]);
+    if (!updated) return res.status(404).json({ message: 'Exam not found' });
+    res.json(updated.toJSON());
   } catch (err) {
     console.error('PUT /api/exams/:id error', err);
     res.status(500).json({ message: 'Error updating exam' });
   }
 });
 
-app.delete('/api/exams/:id', async (req, res) => {
+app.delete('/api/exams/:id', verifyToken, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await query('DELETE FROM exams WHERE id = ?', [id]);
-    if (result.affectedRows === 0) return res.status(404).json({ message: 'Exam not found' });
+    const deleted = await Exam.findByIdAndDelete(id);
+    if (!deleted) return res.status(404).json({ message: 'Exam not found' });
     res.json({ success: true });
   } catch (err) {
     console.error('DELETE /api/exams/:id error', err);
     res.status(500).json({ message: 'Error deleting exam' });
+  }
+});
+
+// -------- Announcements --------
+app.get('/api/announcements', async (req, res) => {
+  try {
+    const rows = await Announcement.find({}).sort({ created_at: -1, createdAt: -1 });
+    const out = rows.map(function (a) {
+      return {
+        id: String(a._id),
+        text: a.message || a.title || '',
+        created_at: a.created_at || a.createdAt
+      };
+    });
+    res.json(out);
+  } catch (err) {
+    console.error('GET /api/announcements error', err);
+    res.status(500).json({ message: 'Error fetching announcements' });
+  }
+});
+
+app.post('/api/announcements', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text) return res.status(400).json({ message: 'Text is required' });
+    const a = new Announcement({ title: 'Announcement', message: String(text) });
+    await a.save();
+    res.status(201).json({ id: String(a._id), text: a.message, created_at: a.created_at || a.createdAt });
+  } catch (err) {
+    console.error('POST /api/announcements error', err);
+    res.status(500).json({ message: 'Error posting announcement' });
+  }
+});
+
+app.delete('/api/announcements/:id', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deleted = await Announcement.findByIdAndDelete(id);
+    if (!deleted) return res.status(404).json({ message: 'Announcement not found' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('DELETE /api/announcements/:id error', err);
+    res.status(500).json({ message: 'Error deleting announcement' });
   }
 });
 
@@ -1997,12 +2068,28 @@ app.post('/api/tournament-registrations', async (req, res) => {
     if (!tournament_id || !name || !email || !phone || !centre || !batch) {
       return res.status(400).json({ message: 'All fields are required' });
     }
-    const result = await query(
-      'INSERT INTO tournament_registrations (tournament_id, name, email, phone, centre, batch) VALUES (?, ?, ?, ?, ?, ?)',
-      [tournament_id, name, email, phone, centre, batch]
-    );
-    const inserted = await query('SELECT tr.*, t.title as tournament_title FROM tournament_registrations tr JOIN tournaments t ON tr.tournament_id = t.id WHERE tr.id = ?', [result.insertId]);
-    res.status(201).json(inserted[0]);
+    const reg = new TournamentRegistration({
+      tournament_id,
+      name,
+      email,
+      phone,
+      centre,
+      batch
+    });
+    await reg.save();
+    const populated = await TournamentRegistration.findById(reg._id).populate('tournament_id', 'name date');
+    res.status(201).json({
+      id: String(populated._id),
+      tournament_id: String(populated.tournament_id?._id || ''),
+      tournament_title: populated.tournament_id?.name || '',
+      tournament_date: populated.tournament_id?.date ? new Date(populated.tournament_id.date).toISOString().slice(0, 10) : '',
+      name: populated.name,
+      email: populated.email,
+      phone: populated.phone,
+      centre: populated.centre,
+      batch: populated.batch,
+      created_at: populated.created_at
+    });
   } catch (err) {
     console.error('POST /api/tournament-registrations error', err);
     res.status(500).json({ message: 'Error creating tournament registration' });
@@ -2011,8 +2098,22 @@ app.post('/api/tournament-registrations', async (req, res) => {
 
 app.get('/api/tournament-registrations', async (req, res) => {
   try {
-    const result = await query('SELECT tr.*, t.title as tournament_title, t.date as tournament_date FROM tournament_registrations tr JOIN tournaments t ON tr.tournament_id = t.id ORDER BY tr.created_at DESC');
-    res.json(result);
+    const regs = await TournamentRegistration.find({}).sort({ created_at: -1 }).populate('tournament_id', 'name date');
+    const out = regs.map(function (r) {
+      return {
+        id: String(r._id),
+        tournament_id: String(r.tournament_id?._id || ''),
+        tournament_title: r.tournament_id?.name || '',
+        tournament_date: r.tournament_id?.date ? new Date(r.tournament_id.date).toISOString().slice(0, 10) : '',
+        name: r.name,
+        email: r.email,
+        phone: r.phone,
+        centre: r.centre,
+        batch: r.batch,
+        created_at: r.created_at
+      };
+    });
+    res.json(out);
   } catch (err) {
     console.error('GET /api/tournament-registrations error', err);
     res.status(500).json({ message: 'Error fetching tournament registrations' });
@@ -2022,8 +2123,8 @@ app.get('/api/tournament-registrations', async (req, res) => {
 app.delete('/api/tournament-registrations/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await query('DELETE FROM tournament_registrations WHERE id = ?', [id]);
-    if (result.affectedRows === 0) return res.status(404).json({ message: 'Registration not found' });
+    const deleted = await TournamentRegistration.findByIdAndDelete(id);
+    if (!deleted) return res.status(404).json({ message: 'Registration not found' });
     res.json({ success: true });
   } catch (err) {
     console.error('DELETE /api/tournament-registrations/:id error', err);
@@ -2077,12 +2178,32 @@ app.post('/api/store-orders', async (req, res) => {
     if (!store_item_id || !name || !email || !phone || !centre || !batch) {
       return res.status(400).json({ message: 'All fields are required' });
     }
-    const result = await query(
-      'INSERT INTO store_orders (store_item_id, name, email, phone, centre, batch, quantity) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      [store_item_id, name, email, phone, centre, batch, quantity]
-    );
-    const inserted = await query('SELECT so.*, si.name as item_name, si.price as item_price FROM store_orders so JOIN store_items si ON so.store_item_id = si.id WHERE so.id = ?', [result.insertId]);
-    res.status(201).json(inserted[0]);
+    const order = new StoreOrder({
+      store_item_id,
+      student_name: name,
+      student_email: email,
+      phone,
+      centre,
+      batch,
+      quantity: Number(quantity) || 1
+    });
+    await order.save();
+    const populated = await StoreOrder.findById(order._id).populate('store_item_id', 'name price');
+    res.status(201).json({
+      id: String(populated._id),
+      store_item_id: String(populated.store_item_id?._id || ''),
+      item_name: populated.store_item_id?.name || '',
+      item_price: populated.store_item_id?.price || 0,
+      total_price: (Number(populated.quantity) || 0) * (Number(populated.store_item_id?.price) || 0),
+      name: populated.student_name,
+      email: populated.student_email,
+      phone: populated.phone,
+      centre: populated.centre,
+      batch: populated.batch,
+      quantity: populated.quantity,
+      status: populated.status,
+      created_at: populated.created_at
+    });
   } catch (err) {
     console.error('POST /api/store-orders error', err);
     res.status(500).json({ message: 'Error creating store order' });
@@ -2091,8 +2212,27 @@ app.post('/api/store-orders', async (req, res) => {
 
 app.get('/api/store-orders', async (req, res) => {
   try {
-    const result = await query('SELECT so.*, si.name as item_name, si.price as item_price, (so.quantity * si.price) as total_price FROM store_orders so JOIN store_items si ON so.store_item_id = si.id ORDER BY so.created_at DESC');
-    res.json(result);
+    const orders = await StoreOrder.find({}).sort({ created_at: -1 }).populate('store_item_id', 'name price');
+    const out = orders.map(function (o) {
+      const price = Number(o.store_item_id?.price) || 0;
+      const qty = Number(o.quantity) || 0;
+      return {
+        id: String(o._id),
+        store_item_id: String(o.store_item_id?._id || ''),
+        item_name: o.store_item_id?.name || '',
+        item_price: price,
+        total_price: qty * price,
+        name: o.student_name,
+        email: o.student_email,
+        phone: o.phone,
+        centre: o.centre,
+        batch: o.batch,
+        quantity: o.quantity,
+        status: o.status,
+        created_at: o.created_at
+      };
+    });
+    res.json(out);
   } catch (err) {
     console.error('GET /api/store-orders error', err);
     res.status(500).json({ message: 'Error fetching store orders' });
@@ -2106,10 +2246,25 @@ app.put('/api/store-orders/:id', async (req, res) => {
     if (!status || !['Pending', 'Confirmed', 'Delivered'].includes(status)) {
       return res.status(400).json({ message: 'Invalid status' });
     }
-    const result = await query('UPDATE store_orders SET status = ? WHERE id = ?', [status, id]);
-    if (result.affectedRows === 0) return res.status(404).json({ message: 'Order not found' });
-    const updated = await query('SELECT so.*, si.name as item_name, si.price as item_price, (so.quantity * si.price) as total_price FROM store_orders so JOIN store_items si ON so.store_item_id = si.id WHERE so.id = ?', [id]);
-    res.json(updated[0]);
+    const updated = await StoreOrder.findByIdAndUpdate(id, { status }, { new: true }).populate('store_item_id', 'name price');
+    if (!updated) return res.status(404).json({ message: 'Order not found' });
+    const price = Number(updated.store_item_id?.price) || 0;
+    const qty = Number(updated.quantity) || 0;
+    res.json({
+      id: String(updated._id),
+      store_item_id: String(updated.store_item_id?._id || ''),
+      item_name: updated.store_item_id?.name || '',
+      item_price: price,
+      total_price: qty * price,
+      name: updated.student_name,
+      email: updated.student_email,
+      phone: updated.phone,
+      centre: updated.centre,
+      batch: updated.batch,
+      quantity: updated.quantity,
+      status: updated.status,
+      created_at: updated.created_at
+    });
   } catch (err) {
     console.error('PUT /api/store-orders/:id error', err);
     res.status(500).json({ message: 'Error updating order status' });
@@ -2119,8 +2274,8 @@ app.put('/api/store-orders/:id', async (req, res) => {
 app.delete('/api/store-orders/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await query('DELETE FROM store_orders WHERE id = ?', [id]);
-    if (result.affectedRows === 0) return res.status(404).json({ message: 'Order not found' });
+    const deleted = await StoreOrder.findByIdAndDelete(id);
+    if (!deleted) return res.status(404).json({ message: 'Order not found' });
     res.json({ success: true });
   } catch (err) {
     console.error('DELETE /api/store-orders/:id error', err);
@@ -2136,30 +2291,24 @@ app.get('/api/dashboard/admin', verifyToken, async (req, res) => {
 
   try {
     const stats = await getCachedData('dashboard:admin', async () => {
-      const [
-        instructorsCount,
-        batchesCount,
-        studentsCount,
-        tournamentsCount,
-        storeItemsCount,
-        announcementsCount
-      ] = await Promise.all([
+      const [totalInstructors, totalBatches, totalTournaments, totalStoreItems, totalAnnouncements] = await Promise.all([
         Instructor.countDocuments({ active: true }),
         Batch.countDocuments({ active: true }),
-        Student.countDocuments({ active: true }),
         Tournament.countDocuments({ active: true }),
         StoreItem.countDocuments({ active: true }),
         Announcement.countDocuments({})
       ]);
 
       return {
-        newAdmissions: studentsCount || 0,
-        tournamentsRegistered: tournamentsCount || 0,
-        upcomingExams: 0,
-        totalInstructors: instructorsCount || 0,
-        totalBatches: batchesCount || 0,
-        totalStoreItems: storeItemsCount || 0,
-        totalAnnouncements: announcementsCount || 0
+        totalInstructors: totalInstructors || 0,
+        totalBatches: totalBatches || 0,
+        totalAdmissions: 0,
+        totalPayments: 0,
+        totalTournaments: totalTournaments || 0,
+        totalStoreItems: totalStoreItems || 0,
+        totalExams: 0,
+        totalAnnouncements: totalAnnouncements || 0,
+        totalAttendance: 0
       };
     }, 600); // Cache for 10 minutes
 
@@ -2177,25 +2326,23 @@ app.get('/api/dashboard/student', verifyToken, async (req, res) => {
 
   try {
     const stats = await getCachedData(`dashboard:student:${req.user.studentId}`, async () => {
-      const now = new Date();
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
       const [
-        upcomingTournamentsCount,
-        announcementsCount,
-        storeItemsCount
+        upcomingTournaments,
+        upcomingExams,
+        newAnnouncements,
+        storeItems
       ] = await Promise.all([
-        Tournament.countDocuments({ active: true, date: { $gt: now } }),
-        Announcement.countDocuments({ created_at: { $gt: sevenDaysAgo } }),
-        StoreItem.countDocuments({ active: true })
+        query('SELECT COUNT(*) as count FROM tournaments WHERE date > CURDATE()'),
+        query('SELECT COUNT(*) as count FROM exams WHERE date > CURDATE()'),
+        query('SELECT COUNT(*) as count FROM announcements WHERE created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)'),
+        query('SELECT COUNT(*) as count FROM store_items')
       ]);
 
       return {
-        registeredTournaments: 0,
-        upcomingExams: 0,
-        newAnnouncements: announcementsCount || 0,
-        storeItems: storeItemsCount || 0,
-        upcomingTournaments: upcomingTournamentsCount || 0
+        upcomingTournaments: upcomingTournaments[0].count || 0,
+        upcomingExams: upcomingExams[0].count || 0,
+        newAnnouncements: newAnnouncements[0].count || 0,
+        storeItems: storeItems[0].count || 0
       };
     }, 300); // Cache for 5 minutes
 
@@ -2219,7 +2366,7 @@ app.post('/api/login', async (req, res) => {
     if (role === 'admin') {
       // MongoDB Admin login
       const admin = await Admin.findOne({ email: normEmail });
-
+      
       if (!admin) {
         // Create default admin if doesn't exist
         if (normEmail === 'karatesubhash455@gmail.com' && password === 'karate@123') {
@@ -2229,7 +2376,7 @@ app.post('/api/login', async (req, res) => {
             password: 'karate@123'
           });
           await newAdmin.save();
-
+          
           const token = jwt.sign(
             { email, role: 'admin', name: 'Admin' },
             JWT_SECRET,
@@ -2244,28 +2391,7 @@ app.post('/api/login', async (req, res) => {
         }
         return res.status(401).json({ message: 'Invalid admin credentials' });
       }
-
-      // Check if admin password is empty/invalid and recreate if default credentials used
-      if (!admin.password || admin.password === '') {
-        if (normEmail === 'karatesubhash455@gmail.com' && password === 'karate@123') {
-          admin.password = 'karate@123';
-          await admin.save();
-
-          const token = jwt.sign(
-            { email, role: 'admin', name: admin.name },
-            JWT_SECRET,
-            { expiresIn: '24h' }
-          );
-          return res.json({
-            success: true,
-            token,
-            user: { email, role: 'admin', name: admin.name },
-            message: 'Admin login successful'
-          });
-        }
-        return res.status(401).json({ message: 'Invalid admin credentials' });
-      }
-
+      
       const isMatch = await admin.comparePassword(password);
       if (!isMatch) {
         return res.status(401).json({ message: 'Invalid admin credentials' });
@@ -2329,8 +2455,7 @@ app.post('/api/login', async (req, res) => {
 
 // JWT verification middleware
 function verifyToken(req, res, next) {
-  const authHeader = req.headers.authorization;
-  const token = authHeader && authHeader.split(' ')[1];
+  const token = req.headers.authorization?.split(' ')[1];
   
   if (!token) {
     return res.status(401).json({ message: 'No token provided' });
@@ -2345,75 +2470,14 @@ function verifyToken(req, res, next) {
   }
 }
 
-// -------- Admin Seed (Mock Data) --------
-app.post('/api/admin/seed', verifyToken, async (req, res) => {
-  try {
-    if (!req.user || req.user.role !== 'admin') {
-      return res.status(403).json({ message: 'Admin access required' });
-    }
-
-    const created = { instructors: 0, batches: 0, storeItems: 0, tournaments: 0, announcements: 0 };
-
-    const existingInstructor = await Instructor.findOne({ active: true });
-    if (!existingInstructor) {
-      await Instructor.create([
-        { name: 'Sensei Subhash', description: 'Senior Instructor', beltLevel: 'Black Belt', photoUrl: '' },
-        { name: 'Sensei Jiya', description: 'Assistant Instructor', beltLevel: 'Brown Belt', photoUrl: '' }
-      ]);
-      created.instructors = 2;
-    }
-
-    const existingBatch = await Batch.findOne({ active: true });
-    if (!existingBatch) {
-      await Batch.create([
-        { name: 'Batch 1', centre: 'St. Cruz', timing: '6:00 PM - 7:00 PM', capacity: 30 },
-        { name: 'Batch 2', centre: 'Panjim', timing: '7:00 PM - 8:00 PM', capacity: 30 }
-      ]);
-      created.batches = 2;
-    }
-
-    const existingItem = await StoreItem.findOne({ active: true });
-    if (!existingItem) {
-      await StoreItem.create([
-        { name: 'Karate Gloves', description: 'Training gloves', price: 499, stock: 50 },
-        { name: 'Mouth Guard', description: 'Safety mouth guard', price: 199, stock: 100 }
-      ]);
-      created.storeItems = 2;
-    }
-
-    const existingTournament = await Tournament.findOne({ active: true });
-    if (!existingTournament) {
-      const nextMonth = new Date();
-      nextMonth.setMonth(nextMonth.getMonth() + 1);
-      await Tournament.create([
-        { name: 'Goa Open Karate', description: 'Annual tournament', date: nextMonth, venue: 'Goa Indoor Stadium' }
-      ]);
-      created.tournaments = 1;
-    }
-
-    const existingAnn = await Announcement.findOne({});
-    if (!existingAnn) {
-      await Announcement.create({ title: 'Welcome', message: 'Welcome to the Student Dashboard!' });
-      created.announcements = 1;
-    }
-
-    await invalidateCache('dashboard:*');
-    res.json({ success: true, created });
-  } catch (err) {
-    console.error('POST /api/admin/seed error', err);
-    res.status(500).json({ message: 'Seed failed: ' + err.message });
-  }
-});
-
 // Temporary endpoint to delete student registration (for testing)
-app.post('/api/delete-student-registration', async (req, res) => {
+app.post('/api/delete-registration', async (req, res) => {
   try {
     const { email } = req.body;
     const e = String(email || '').trim().toLowerCase();
     if (!e) return res.status(400).json({ message: 'Email required' });
-    
-    await query('DELETE FROM student_registrations WHERE email = ?', [e]);
-    res.json({ message: 'Registration deleted for: ' + e });
+
+    return res.status(410).json({ message: 'Legacy registration deletion is disabled. Student registrations are stored in MongoDB now.' });
   } catch (err) {
     console.error('Delete error:', err);
     res.status(500).json({ message: 'Error deleting registration' });
@@ -2438,7 +2502,7 @@ app.post('/api/student-register', async (req, res) => {
 
     console.log('📝 Parsed values:', { f, l, e, p, b, c });
 
-    if (!f || !l || !e || !p || !b) {
+    if (!f || !l || !e || !p || !b || !c) {
       console.log('❌ Missing required fields');
       return res.status(400).json({ message: 'All fields are required' });
     }
@@ -2450,13 +2514,14 @@ app.post('/api/student-register', async (req, res) => {
     }
     
     // Create new student with bcrypt password
+    const passwordHash = await bcrypt.hash(pwd || 'karate@123', 10);
     const student = new Student({
       fullName: `${f} ${l}`,
       email: e,
       phone: p,
       batch: b,
       centre: c,
-      password: pwd || 'karate@123' // Default password if not provided
+      passwordHash
     });
     
     await student.save();
@@ -2499,62 +2564,7 @@ app.post('/api/student-register', async (req, res) => {
   }
 });
 
-// Resend verification email endpoint
-app.post('/api/resend-student-verification', async (req, res) => {
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ message: 'Email required' });
-
-  try {
-    const students = await query('SELECT * FROM student_registrations WHERE email = ?', [email]);
-    if (students.length === 0) {
-      return res.status(404).json({ message: 'Student not found' });
-    }
-
-    const student = students[0];
-    if (student.email_verified) {
-      return res.status(400).json({ message: 'Email already verified' });
-    }
-
-    // Generate new token
-    const verificationToken = uuidv4();
-    await query('UPDATE student_registrations SET verification_token = ?, verification_sent_at = NOW() WHERE id = ?', [verificationToken, student.id]);
-
-    // Send email
-    const verificationLink = `${req.protocol}://${req.get('host')}/verify-student-email?token=${verificationToken}&email=${encodeURIComponent(email)}`;
-    const mailOptions = {
-      to: email,
-      from: EMAIL_USER,
-      subject: 'Resend: Verify your Student Account - WTSKF-GOA',
-      html: `
-        <html>
-        <body>
-          <h2>Resend: Verify Your Student Account</h2>
-          <p>Hi ${student.first_name} ${student.last_name},</p>
-          <p>Please verify your account.</p>
-          <p>Your login details:</p>
-          <ul>
-            <li>Email: ${email}</li>
-            <li>Password: karate@${student.batch}</li>
-          </ul>
-          <p>Click here to verify your account: <a href="${verificationLink}">Verify Account</a></p>
-          <p>This link expires in 24 hours.</p>
-          <p>If you didn't register, ignore this email.</p>
-        </body>
-        </html>
-      `
-    };
-    sendMail(mailOptions).then(() => {
-      console.log('Resend verification email sent to:', email);
-    }).catch((emailError) => {
-      console.error('Error sending resend verification email:', emailError);
-    });
-
-    res.json({ message: 'Verification link resent' });
-  } catch (err) {
-    console.error('Resend verification error:', err);
-    res.status(500).json({ message: 'Error resending verification' });
-  }
-});
+ 
 
 // GET test email endpoint - for easy browser testing
 app.get('/api/test-email', async (req, res) => {
@@ -2663,119 +2673,27 @@ app.post('/api/test-email', async (req, res) => {
 });
 
 // Student email verification endpoint
-app.get('/verify-student-email', async (req, res) => {
-  try {
-    const { token, email } = req.query;
-    
-    if (!token || !email) {
-      return res.status(400).send(`
-        <html>
-          <body style="font-family: Arial, sans-serif; background: #1a1a1a; color: #fff; text-align: center; padding: 50px;">
-            <h2 style="color: #d4af37;">Invalid Verification Link</h2>
-            <p>The verification link is invalid or missing required parameters.</p>
-            <a href="/" style="color: #d4af37;">Return to Home</a>
-          </body>
-        </html>
-      `);
-    }
-    
-    const students = await query('SELECT * FROM student_registrations WHERE email = ? AND verification_token = ?', [email, token]);
-    
-    if (students.length === 0) {
-      return res.status(400).send(`
-        <html>
-          <body style="font-family: Arial, sans-serif; background: #1a1a1a; color: #fff; text-align: center; padding: 50px;">
-            <h2 style="color: #e74c3c;">Verification Failed</h2>
-            <p>Invalid or expired verification link.</p>
-            <a href="/" style="color: #d4af37;">Return to Home</a>
-          </body>
-        </html>
-      `);
-    }
-    
-    const student = students[0];
-    
-    if (student.email_verified) {
-      return res.send(`
-        <html>
-          <body style="font-family: Arial, sans-serif; background: #1a1a1a; color: #fff; text-align: center; padding: 50px;">
-            <h2 style="color: #d4af37;">Already Verified</h2>
-            <p>Your email has already been verified.</p>
-            <a href="/" style="color: #d4af37;">Return to Home</a>
-          </body>
-        </html>
-      `);
-    }
-    
-    await query('UPDATE student_registrations SET email_verified = TRUE, verification_token = NULL WHERE id = ?', [student.id]);
-    
-    res.send(`
-      <html>
-        <body style="font-family: Arial, sans-serif; background: #1a1a1a; color: #fff; text-align: center; padding: 50px;">
-          <div style="max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #27ae60; margin-bottom: 20px;">✅ Student Account Verified Successfully!</h2>
-            <p style="font-size: 18px; margin-bottom: 30px;">Welcome to WTSKF-GOA, ${student.first_name}!</p>
-            <p style="color: #ddd; margin-bottom: 30px;">Your student account is now active. You can log in to your dashboard using:</p>
-            <div style="background: rgba(212,175,55,0.1); padding: 20px; border-radius: 8px; margin: 20px 0; text-align: left;">
-              <p style="color: #fff; margin: 10px 0;"><strong>Email:</strong> ${student.email}</p>
-              <p style="color: #fff; margin: 10px 0;"><strong>Password:</strong> karate@${student.batch}</p>
-            </div>
-            <a href="/" style="background: linear-gradient(135deg, #d4af37, #f4e4bc); color: #000; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
-              Go to Login
-            </a>
-          </div>
-        </body>
-      </html>
-    `);
-  } catch (err) {
-    console.error('Student email verification error:', err);
-    res.status(500).send(`
-      <html>
-        <body style="font-family: Arial, sans-serif; background: #1a1a1a; color: #fff; text-align: center; padding: 50px;">
-          <h2 style="color: #e74c3c;">Verification Error</h2>
-          <p>An error occurred during email verification. Please try again or contact support.</p>
-          <a href="/" style="color: #d4af37;">Return to Home</a>
-        </body>
-      </html>
-    `);
-  }
+app.get('/verify-student-email', (req, res) => {
+  res.send(`
+    <html>
+      <body style="font-family: Arial, sans-serif; background: #1a1a1a; color: #fff; text-align: center; padding: 50px;">
+        <h1>Email Verification Not Required</h1>
+        <p>Student registrations are now handled via MongoDB and do not require email verification.</p>
+        <p>Please return to the website and login.</p>
+        <a href="/" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #e63946; color: white; text-decoration: none; border-radius: 5px;">Go to Home</a>
+      </body>
+    </html>
+  `);
 });
 
 // -------- Create Student Table --------
 app.get('/api/create-student-table', async (req, res) => {
-  try {
-    await query(`
-      CREATE TABLE IF NOT EXISTS student_registrations (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        first_name VARCHAR(100) NOT NULL,
-        last_name VARCHAR(100) NOT NULL,
-        email VARCHAR(255) NOT NULL,
-        phone VARCHAR(50) NOT NULL,
-        batch ENUM('batch1', 'batch2', 'batch3', 'batch4', 'batchA1') NOT NULL,
-        email_verified BOOLEAN DEFAULT FALSE,
-        verification_token VARCHAR(255),
-        verification_sent_at TIMESTAMP NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_email (email),
-        INDEX idx_verification_token (verification_token)
-      )
-    `);
-    res.json({ message: 'Student registrations table created successfully' });
-  } catch (err) {
-    console.error('Error creating student table:', err);
-    res.status(500).json({ message: 'Error creating student table' });
-  }
+  return res.status(410).json({ message: 'Legacy SQL endpoint disabled. Student registrations use MongoDB now.' });
 });
 
 // Fallback: send index.html for any unknown route (SPA-style)
 app.get('/api/health', async (req, res) => {
-  let dbOk = false;
-  try {
-    await query('SELECT 1');
-    dbOk = true;
-  } catch (_) {
-    dbOk = false;
-  }
+  const dbOk = (mongoose.connection && mongoose.connection.readyState === 1);
   const redisOk = !!(redisClient && redisClient.isOpen);
   res.status(200).json({ status: 'ok', db: dbOk, redis: redisOk });
 });
@@ -2795,6 +2713,8 @@ process.on('uncaughtException', (err) => {
 // Start server
 const startServer = async () => {
   await connectDB();
+  await ensureDefaultAdmin();
+  await seedMockData();
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Karate admin backend running on http://0.0.0.0:${PORT}`);
     console.log('MongoDB is the primary database');

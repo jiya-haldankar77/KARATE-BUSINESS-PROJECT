@@ -2186,6 +2186,10 @@
                     </select>
                 </div>
                 <div class="form-group">
+                    <label for="studentCentre">Centre</label>
+                    <input type="text" id="studentCentre" class="form-control" placeholder="Enter your centre" required>
+                </div>
+                <div class="form-group">
                     <label for="studentPassword">Password</label>
                     <input type="password" id="studentPassword" class="form-control" placeholder="Create a password" required>
                 </div>
@@ -2341,14 +2345,6 @@
                         </div>
 
                                             </div>
-
-                    <!-- Admin Actions -->
-                    <div class="recent-activity" style="margin-bottom: 2rem;">
-                        <h3 class="section-title">
-                            <i class="fas fa-tools"></i> Admin Actions
-                        </h3>
-                        <button type="button" class="btn btn-primary" onclick="seedMockData()">Seed Mock Data</button>
-                    </div>
 
                     <!-- Recent Activity -->
                     <div class="recent-activity">
@@ -3443,47 +3439,34 @@
             document.addEventListener('DOMContentLoaded', function() {
                 var adminLoginForm = document.getElementById('adminLoginForm');
                 if (adminLoginForm) {
-                    adminLoginForm.addEventListener('submit', async function (e) {
+                    adminLoginForm.addEventListener('submit', function (e) {
                         e.preventDefault();
-
+                        
                         var email = document.getElementById('adminEmail').value;
                         var password = document.getElementById('adminPassword').value;
+                        
+                        console.log('Login attempt:', email); // Debug log
 
-                        var submitBtn = adminLoginForm.querySelector('button[type="submit"]');
-                        var originalText = submitBtn ? submitBtn.textContent : '';
-                        if (submitBtn) {
-                            submitBtn.disabled = true;
-                            submitBtn.textContent = 'Logging in...';
-                        }
-
-                        try {
-                            const resp = await fetch('/api/login', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ email: email, password: password, role: 'admin' })
+                        fetch('/api/login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ email: email, password: password, role: 'admin' })
+                        })
+                            .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+                            .then(function (resp) {
+                                if (!resp.ok || !resp.data || !resp.data.success) {
+                                    throw new Error((resp.data && resp.data.message) || 'Login failed');
+                                }
+                                localStorage.setItem('authToken', resp.data.token);
+                                sessionStorage.setItem('currentUser', JSON.stringify(resp.data.user));
+                                closeModal('adminLoginModal');
+                                showSection('admin-dashboard');
+                                if (typeof updateDashboardStats === 'function') updateDashboardStats();
+                            })
+                            .catch(function (err) {
+                                console.error('Admin login failed:', err);
+                                alert(err.message || 'Invalid email or password.');
                             });
-
-                            const data = await resp.json().catch(function () { return {}; });
-                            if (!resp.ok || !data || !data.success) {
-                                alert((data && data.message) ? data.message : 'Admin login failed');
-                                return;
-                            }
-
-                            localStorage.setItem('authToken', data.token);
-                            sessionStorage.setItem('currentUser', JSON.stringify(data.user));
-                            isAdminLoggedIn = true;
-                            closeModal('adminLoginModal');
-                            window.showSection('admin-dashboard');
-                            if (typeof updateDashboardStats === 'function') updateDashboardStats();
-                        } catch (err) {
-                            console.error('Admin login error:', err);
-                            alert('Admin login error. Please try again.');
-                        } finally {
-                            if (submitBtn) {
-                                submitBtn.disabled = false;
-                                submitBtn.textContent = originalText;
-                            }
-                        }
                     });
                 }
             });
@@ -3994,11 +3977,9 @@
                 if (!container) return;
                 container.innerHTML = '';
                 data.forEach(function (batch) {
-                    var bid = batch.id || batch._id;
-                    var created = batch.created_at || batch.createdAt;
                     var card = document.createElement('div');
                     card.className = 'info-card';
-                    card.innerHTML = '<h3>' + batch.name + '</h3><p>' + (batch.description || '') + '</p><div class="info-meta"><span class="timing-label">Timing:</span> ' + (batch.timing || 'Not set') + '<br><span class="centre-label">Centre:</span> ' + (batch.centre || 'Not set') + '<br>Created: ' + (created ? new Date(created).toLocaleDateString() : '') + '</div><div class="form-actions" style="margin-top: 1rem;"><button class="btn btn-outline" onclick="editBatch(\'' + bid + '\')">Edit</button> <button class="btn btn-primary" onclick="deleteBatch(\'' + bid + '\')">Delete</button></div>';
+                    card.innerHTML = '<h3>' + batch.name + '</h3><p>' + (batch.description || '') + '</p><div class="info-meta"><span class="timing-label">Timing:</span> ' + (batch.timing || 'Not set') + '<br><span class="centre-label">Centre:</span> ' + (batch.centre || 'Not set') + '<br>Created: ' + new Date(batch.created_at).toLocaleDateString() + '</div><div class="form-actions" style="margin-top: 1rem;"><button class="btn btn-outline" onclick="editBatch(' + batch.id + ')">Edit</button> <button class="btn btn-primary" onclick="deleteBatch(' + batch.id + ')">Delete</button></div>';
                     container.appendChild(card);
                 });
             }
@@ -4710,24 +4691,7 @@
                     .catch(console.error);
             };
 
-            window.seedMockData = function () {
-                if (!confirm('This will seed mock data for instructors, batches, store items, tournaments, and announcements. Continue?')) return;
-                apiCall('POST', '/api/admin/seed')
-                    .then(function (data) {
-                        alert('Mock data seeded successfully! Created: ' + JSON.stringify(data.created));
-                        updateDashboardStats();
-                        loadInstructors();
-                        loadBatches();
-                        loadStoreItems();
-                        loadTournaments();
-                        loadAnnouncements();
-                    })
-                    .catch(function (err) {
-                        console.error('Seed error:', err);
-                        alert('Failed to seed mock data. Check console for details.');
-                    });
-            };
-
+            
             // Tournament Registrations
             function loadTournamentRegistrations() {
                 apiCall('GET', '/api/tournament-registrations').then(function (rows) {
@@ -5062,9 +5026,8 @@
                         var email = document.getElementById('studentEmail').value;
                         var phone = document.getElementById('studentPhone').value;
                         var batch = document.getElementById('studentBatch').value;
+                        var centre = document.getElementById('studentCentre').value;
                         var password = document.getElementById('studentPassword').value;
-                        var centreEl = document.getElementById('studentCentre');
-                        var centre = centreEl ? centreEl.value : '';
                         
                         // Disable register button to prevent multiple submissions
                         var registerButton = studentRegistrationForm.querySelector('.btn-primary');
