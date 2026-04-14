@@ -3984,7 +3984,7 @@
                 data.forEach(function (batch) {
                     var card = document.createElement('div');
                     card.className = 'info-card';
-                    card.innerHTML = '<h3>' + batch.name + '</h3><p>' + (batch.description || '') + '</p><div class="info-meta"><span class="timing-label">Timing:</span> ' + (batch.timing || 'Not set') + '<br><span class="centre-label">Centre:</span> ' + (batch.centre || 'Not set') + '<br>Created: ' + new Date(batch.created_at).toLocaleDateString() + '</div><div class="form-actions" style="margin-top: 1rem;"><button class="btn btn-outline" onclick="editBatch(' + batch.id + ')">Edit</button> <button class="btn btn-primary" onclick="deleteBatch(' + batch.id + ')">Delete</button></div>';
+                    card.innerHTML = '<h3>' + batch.name + '</h3><p>' + (batch.description || '') + '</p><div class="info-meta"><span class="timing-label">Timing:</span> ' + (batch.timing || 'Not set') + '<br><span class="centre-label">Centre:</span> ' + (batch.centre || 'Not set') + '<br>Created: ' + new Date(batch.created_at).toLocaleDateString() + '</div><div class="form-actions" style="margin-top: 1rem;"><button class="btn btn-outline" onclick="editBatch(\'' + batch.id + '\')">Edit</button> <button class="btn btn-primary" onclick="deleteBatch(\'' + batch.id + '\')">Delete</button></div>';
                     container.appendChild(card);
                 });
             }
