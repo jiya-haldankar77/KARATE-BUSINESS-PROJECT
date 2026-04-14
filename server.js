@@ -1115,6 +1115,9 @@ async function invalidateCache(pattern) {
     }
   } catch (error) {
     console.log('Cache invalidation error:', error.message);
+  }
+}
+
 app.get('/api/instructors', async (req, res) => {
   try {
     const instructors = await Instructor.find({ active: true }).sort({ createdAt: -1 });
