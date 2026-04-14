@@ -33,6 +33,7 @@ const Student = require('./models/Student');
 const Tournament = require('./models/Tournament');
 const StoreItem = require('./models/StoreItem');
 const FeesPayment = require('./models/FeesPayment');
+const Announcement = require('./models/Announcement');
 
 // Connect to MongoDB
 const connectDB = async () => {
@@ -1174,7 +1175,18 @@ async function invalidateCache(pattern) {
 app.get('/api/instructors', async (req, res) => {
   try {
     const instructors = await Instructor.find({ active: true }).sort({ createdAt: -1 });
-    res.json(instructors);
+    res.json(
+      instructors.map(function (i) {
+        return {
+          id: String(i._id),
+          name: i.name,
+          description: i.description || '',
+          rank: i.beltLevel || '',
+          photo_url: i.photoUrl || '',
+          created_at: i.createdAt
+        };
+      })
+    );
   } catch (err) {
     console.error('GET /api/instructors error', err);
     res.status(500).json({ message: 'Error fetching instructors' });
@@ -1249,7 +1261,19 @@ app.delete('/api/instructors/:id', async (req, res) => {
 app.get('/api/batches', async (req, res) => {
   try {
     const batches = await Batch.find({ active: true }).sort({ createdAt: -1 });
-    res.json(batches);
+    res.json(
+      batches.map(function (b) {
+        return {
+          id: String(b._id),
+          name: b.name,
+          centre: b.centre || '',
+          timing: b.timing || '',
+          capacity: b.capacity,
+          instructor: b.instructor || '',
+          created_at: b.createdAt
+        };
+      })
+    );
   } catch (err) {
     console.error('GET /api/batches error', err);
     res.status(500).json({ message: 'Error fetching batches' });
@@ -1610,7 +1634,18 @@ app.delete('/api/payments/:id', async (req, res) => {
 app.get('/api/tournaments', async (req, res) => {
   try {
     const tournaments = await Tournament.find({ active: true }).sort({ date: -1 });
-    res.json(tournaments);
+    res.json(
+      tournaments.map(function (t) {
+        return {
+          id: String(t._id),
+          title: t.name,
+          location: t.venue || '',
+          date: t.date,
+          description: t.description || '',
+          created_at: t.createdAt
+        };
+      })
+    );
   } catch (err) {
     console.error('GET /api/tournaments error', err);
     res.status(500).json({ message: 'Error fetching tournaments' });
@@ -1679,10 +1714,71 @@ app.delete('/api/tournaments/:id', async (req, res) => {
 app.get('/api/store-items', async (req, res) => {
   try {
     const items = await StoreItem.find({ active: true }).sort({ createdAt: -1 });
-    res.json(items);
+    res.json(
+      items.map(function (it) {
+        return {
+          id: String(it._id),
+          name: it.name,
+          description: it.description || '',
+          price: it.price,
+          created_at: it.createdAt
+        };
+      })
+    );
   } catch (err) {
     console.error('GET /api/store-items error', err);
     res.status(500).json({ message: 'Error fetching store items' });
+  }
+});
+
+// -------- Announcements (MongoDB) --------
+app.get('/api/announcements', async (req, res) => {
+  try {
+    const rows = await Announcement.find({}).sort({ created_at: -1 });
+    res.json(
+      rows.map(function (a) {
+        return {
+          id: String(a._id),
+          text: (a.title ? (a.title + ' - ') : '') + (a.message || ''),
+          created_at: a.created_at
+        };
+      })
+    );
+  } catch (err) {
+    console.error('GET /api/announcements error', err);
+    res.status(500).json({ message: 'Error fetching announcements' });
+  }
+});
+
+app.post('/api/announcements', verifyToken, async (req, res) => {
+  try {
+    if (!req.user || req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+    const { text } = req.body || {};
+    const t = String(text || '').trim();
+    if (!t) return res.status(400).json({ message: 'Text is required' });
+
+    const doc = await Announcement.create({ title: 'Announcement', message: t });
+    res.status(201).json({ id: String(doc._id), text: 'Announcement - ' + (doc.message || ''), created_at: doc.created_at });
+  } catch (err) {
+    console.error('POST /api/announcements error', err);
+    res.status(500).json({ message: 'Error creating announcement' });
+  }
+});
+
+app.delete('/api/announcements/:id', verifyToken, async (req, res) => {
+  try {
+    if (!req.user || req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+    const { id } = req.params;
+    const deleted = await Announcement.findByIdAndDelete(id);
+    if (!deleted) return res.status(404).json({ message: 'Announcement not found' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('DELETE /api/announcements/:id error', err);
+    res.status(500).json({ message: 'Error deleting announcement' });
   }
 });
 
@@ -1813,42 +1909,6 @@ app.delete('/api/exams/:id', async (req, res) => {
   } catch (err) {
     console.error('DELETE /api/exams/:id error', err);
     res.status(500).json({ message: 'Error deleting exam' });
-  }
-});
-
-// -------- Announcements --------
-app.get('/api/announcements', async (req, res) => {
-  try {
-    const rows = await query('SELECT * FROM announcements ORDER BY created_at DESC');
-    res.json(rows);
-  } catch (err) {
-    console.error('GET /api/announcements error', err);
-    res.status(500).json({ message: 'Error fetching announcements' });
-  }
-});
-
-app.post('/api/announcements', async (req, res) => {
-  try {
-    const { text } = req.body;
-    if (!text) return res.status(400).json({ message: 'Text is required' });
-    const result = await query('INSERT INTO announcements (text) VALUES (?)', [text]);
-    const inserted = await query('SELECT * FROM announcements WHERE id = ?', [result.insertId]);
-    res.status(201).json(inserted[0]);
-  } catch (err) {
-    console.error('POST /api/announcements error', err);
-    res.status(500).json({ message: 'Error creating announcement' });
-  }
-});
-
-app.delete('/api/announcements/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const result = await query('DELETE FROM announcements WHERE id = ?', [id]);
-    if (result.affectedRows === 0) return res.status(404).json({ message: 'Announcement not found' });
-    res.json({ success: true });
-  } catch (err) {
-    console.error('DELETE /api/announcements/:id error', err);
-    res.status(500).json({ message: 'Error deleting announcement' });
   }
 });
 
@@ -2077,37 +2137,29 @@ app.get('/api/dashboard/admin', verifyToken, async (req, res) => {
   try {
     const stats = await getCachedData('dashboard:admin', async () => {
       const [
-        instructors,
-        batches,
-        admissions,
-        payments,
-        tournaments,
-        storeItems,
-        exams,
-        announcements,
-        attendance
+        instructorsCount,
+        batchesCount,
+        studentsCount,
+        tournamentsCount,
+        storeItemsCount,
+        announcementsCount
       ] = await Promise.all([
-        query('SELECT COUNT(*) as count FROM instructors'),
-        query('SELECT COUNT(*) as count FROM batches'),
-        query('SELECT COUNT(*) as count FROM admissions'),
-        query('SELECT COUNT(*) as count FROM payments'),
-        query('SELECT COUNT(*) as count FROM tournaments'),
-        query('SELECT COUNT(*) as count FROM store_items'),
-        query('SELECT COUNT(*) as count FROM exams'),
-        query('SELECT COUNT(*) as count FROM announcements'),
-        query('SELECT COUNT(*) as count FROM attendance')
+        Instructor.countDocuments({ active: true }),
+        Batch.countDocuments({ active: true }),
+        Student.countDocuments({ active: true }),
+        Tournament.countDocuments({ active: true }),
+        StoreItem.countDocuments({ active: true }),
+        Announcement.countDocuments({})
       ]);
 
       return {
-        totalInstructors: instructors[0].count || 0,
-        totalBatches: batches[0].count || 0,
-        totalAdmissions: admissions[0].count || 0,
-        totalPayments: payments[0].count || 0,
-        totalTournaments: tournaments[0].count || 0,
-        totalStoreItems: storeItems[0].count || 0,
-        totalExams: exams[0].count || 0,
-        totalAnnouncements: announcements[0].count || 0,
-        totalAttendance: attendance[0].count || 0
+        newAdmissions: studentsCount || 0,
+        tournamentsRegistered: tournamentsCount || 0,
+        upcomingExams: 0,
+        totalInstructors: instructorsCount || 0,
+        totalBatches: batchesCount || 0,
+        totalStoreItems: storeItemsCount || 0,
+        totalAnnouncements: announcementsCount || 0
       };
     }, 600); // Cache for 10 minutes
 
@@ -2125,23 +2177,25 @@ app.get('/api/dashboard/student', verifyToken, async (req, res) => {
 
   try {
     const stats = await getCachedData(`dashboard:student:${req.user.studentId}`, async () => {
+      const now = new Date();
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
       const [
-        upcomingTournaments,
-        upcomingExams,
-        newAnnouncements,
-        storeItems
+        upcomingTournamentsCount,
+        announcementsCount,
+        storeItemsCount
       ] = await Promise.all([
-        query('SELECT COUNT(*) as count FROM tournaments WHERE date > CURDATE()'),
-        query('SELECT COUNT(*) as count FROM exams WHERE date > CURDATE()'),
-        query('SELECT COUNT(*) as count FROM announcements WHERE created_at > DATE_SUB(NOW(), INTERVAL 7 DAY)'),
-        query('SELECT COUNT(*) as count FROM store_items')
+        Tournament.countDocuments({ active: true, date: { $gt: now } }),
+        Announcement.countDocuments({ created_at: { $gt: sevenDaysAgo } }),
+        StoreItem.countDocuments({ active: true })
       ]);
 
       return {
-        upcomingTournaments: upcomingTournaments[0].count || 0,
-        upcomingExams: upcomingExams[0].count || 0,
-        newAnnouncements: newAnnouncements[0].count || 0,
-        storeItems: storeItems[0].count || 0
+        registeredTournaments: 0,
+        upcomingExams: 0,
+        newAnnouncements: announcementsCount || 0,
+        storeItems: storeItemsCount || 0,
+        upcomingTournaments: upcomingTournamentsCount || 0
       };
     }, 300); // Cache for 5 minutes
 
@@ -2254,7 +2308,8 @@ app.post('/api/login', async (req, res) => {
 
 // JWT verification middleware
 function verifyToken(req, res, next) {
-  const token = req.headers.authorization?.split(' ')[1];
+  const authHeader = req.headers.authorization;
+  const token = authHeader && authHeader.split(' ')[1];
   
   if (!token) {
     return res.status(401).json({ message: 'No token provided' });
@@ -2268,6 +2323,66 @@ function verifyToken(req, res, next) {
     return res.status(401).json({ message: 'Invalid token' });
   }
 }
+
+// -------- Admin Seed (Mock Data) --------
+app.post('/api/admin/seed', verifyToken, async (req, res) => {
+  try {
+    if (!req.user || req.user.role !== 'admin') {
+      return res.status(403).json({ message: 'Admin access required' });
+    }
+
+    const created = { instructors: 0, batches: 0, storeItems: 0, tournaments: 0, announcements: 0 };
+
+    const existingInstructor = await Instructor.findOne({ active: true });
+    if (!existingInstructor) {
+      await Instructor.create([
+        { name: 'Sensei Subhash', description: 'Senior Instructor', beltLevel: 'Black Belt', photoUrl: '' },
+        { name: 'Sensei Jiya', description: 'Assistant Instructor', beltLevel: 'Brown Belt', photoUrl: '' }
+      ]);
+      created.instructors = 2;
+    }
+
+    const existingBatch = await Batch.findOne({ active: true });
+    if (!existingBatch) {
+      await Batch.create([
+        { name: 'Batch 1', centre: 'St. Cruz', timing: '6:00 PM - 7:00 PM', capacity: 30 },
+        { name: 'Batch 2', centre: 'Panjim', timing: '7:00 PM - 8:00 PM', capacity: 30 }
+      ]);
+      created.batches = 2;
+    }
+
+    const existingItem = await StoreItem.findOne({ active: true });
+    if (!existingItem) {
+      await StoreItem.create([
+        { name: 'Karate Gloves', description: 'Training gloves', price: 499, stock: 50 },
+        { name: 'Mouth Guard', description: 'Safety mouth guard', price: 199, stock: 100 }
+      ]);
+      created.storeItems = 2;
+    }
+
+    const existingTournament = await Tournament.findOne({ active: true });
+    if (!existingTournament) {
+      const nextMonth = new Date();
+      nextMonth.setMonth(nextMonth.getMonth() + 1);
+      await Tournament.create([
+        { name: 'Goa Open Karate', description: 'Annual tournament', date: nextMonth, venue: 'Goa Indoor Stadium' }
+      ]);
+      created.tournaments = 1;
+    }
+
+    const existingAnn = await Announcement.findOne({});
+    if (!existingAnn) {
+      await Announcement.create({ title: 'Welcome', message: 'Welcome to the Student Dashboard!' });
+      created.announcements = 1;
+    }
+
+    await invalidateCache('dashboard:*');
+    res.json({ success: true, created });
+  } catch (err) {
+    console.error('POST /api/admin/seed error', err);
+    res.status(500).json({ message: 'Seed failed: ' + err.message });
+  }
+});
 
 // Temporary endpoint to delete student registration (for testing)
 app.post('/api/delete-student-registration', async (req, res) => {
@@ -2302,7 +2417,7 @@ app.post('/api/student-register', async (req, res) => {
 
     console.log('📝 Parsed values:', { f, l, e, p, b, c });
 
-    if (!f || !l || !e || !p || !b || !c) {
+    if (!f || !l || !e || !p || !b) {
       console.log('❌ Missing required fields');
       return res.status(400).json({ message: 'All fields are required' });
     }
