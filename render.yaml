@@ -11,19 +11,29 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
-      # DATABASE_URL will be sourced from the Postgres database defined below
-      - key: DATABASE_URL
-        fromDatabase:
-          name: karate-postgres
-          property: connectionString
+
+      - key: MONGO_URI
+        sync: false
 
       - key: JWT_SECRET
         generateValue: true
+
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+
       - key: EMAIL_USER
         value: karatesubhash455@gmail.com
       - key: EMAIL_PASS
         sync: false
       - key: SENDGRID_API_KEY
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_SMTP_USER
+        sync: false
+      - key: BREVO_SMTP_KEY
         sync: false
       - key: REDIS_URL
         fromService:
@@ -46,9 +56,3 @@ services:
     name: karate-redis
     plan: free
     ipAllowList: []
-
-databases:
-  - name: karate-postgres
-    plan: free
-    databaseName: karate
-    user: karate

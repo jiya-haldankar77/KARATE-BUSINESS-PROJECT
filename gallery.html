@@ -146,6 +146,43 @@
             margin-bottom: 2rem;
         }
 
+        .category-tabs {
+            display: flex;
+            justify-content: center;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            margin-bottom: 2rem;
+        }
+
+        .category-tabs button {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: var(--text-muted);
+            padding: 0.65rem 1.2rem;
+            border-radius: 999px;
+            cursor: pointer;
+            transition: var(--transition);
+            font-size: 0.95rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .category-tabs button.active {
+            background: rgba(212,175,55,0.95);
+            border-color: var(--primary);
+            color: var(--dark);
+            font-weight: 700;
+        }
+
+        .category-tabs button:hover:not(.active) {
+            background: rgba(255,255,255,0.08);
+            border-color: rgba(255,255,255,0.2);
+            color: var(--text);
+        }
+
         .gallery-toggle button {
             background: rgba(255,255,255,0.05);
             border: 1px solid rgba(255,255,255,0.1);
@@ -181,7 +218,7 @@
         }
 
         .gallery-card {
-            aspect-ratio: 1 / 1;
+            min-height: 300px;
             border-radius: 15px;
             overflow: hidden;
             cursor: pointer;
@@ -200,7 +237,7 @@
         .gallery-card img {
             width: 100%;
             height: 100%;
-            object-fit: cover;
+            object-fit: contain;
             display: block;
             transition: transform 0.3s ease;
         }
@@ -458,12 +495,20 @@
 
         <!-- Gallery/Video Toggle -->
         <div class="gallery-toggle">
-            <button class="active" onclick="showGallery()">
+            <button class="active" onclick="showGallery(event)">
                 <i class="fas fa-images"></i> Gallery
             </button>
-            <button onclick="showVideos()">
+            <button onclick="showVideos(event)">
                 <i class="fas fa-video"></i> Videos
             </button>
+        </div>
+
+        <div class="category-tabs" id="categoryTabs">
+            <button class="active" data-category="all" onclick="selectCategory(event, 'all')"><i class="fas fa-th"></i> All</button>
+            <button data-category="seminar" onclick="selectCategory(event, 'seminar')"><i class="fas fa-chalkboard-teacher"></i> Seminar</button>
+            <button data-category="tournament" onclick="selectCategory(event, 'tournament')"><i class="fas fa-trophy"></i> Tournaments</button>
+            <button data-category="activities" onclick="selectCategory(event, 'activities')"><i class="fas fa-dumbbell"></i> Activities</button>
+            <button data-category="more" onclick="selectCategory(event, 'more')"><i class="fas fa-layer-group"></i> More</button>
         </div>
 
         <!-- Gallery Grid -->
@@ -502,7 +547,7 @@
 
     <script>
         // Gallery Data
-        const galleryImages = [
+        const defaultGalleryImages = [
             'gallery/k1.jpg',
             'gallery/k2.jpg',
             'gallery/new 1.jpeg',
@@ -523,12 +568,84 @@
             'gallery/WhatsApp Image 2025-12-25 at 5.34.07 PM.jpeg'
         ];
 
+        let galleryImages = [...defaultGalleryImages];
+
         const galleryVideos = [
             { src: 'gallery/kvideo.mp4', title: 'Tournament Highlights', description: 'Best moments from our recent championship' }
         ];
 
         let currentImageIndex = 0;
         let currentView = 'gallery';
+        let currentCategory = 'all';
+
+        async function loadCategoryImages(category) {
+            const galleryGrid = document.getElementById('galleryGrid');
+            if (galleryGrid) {
+                galleryGrid.innerHTML = '<div class="loading"><i class="fas fa-spinner"></i><p>Loading ' + category + '...</p></div>';
+            }
+
+            try {
+                const resp = await fetch('/api/gallery/' + encodeURIComponent(category));
+                if (!resp.ok) {
+                    throw new Error('Failed to load category');
+                }
+                const data = await resp.json();
+                const urls = (data && Array.isArray(data.urls)) ? data.urls : [];
+                galleryImages = urls;
+            } catch (e) {
+                console.error('Failed to load category images', e);
+                galleryImages = [];
+            }
+        }
+
+        function normalizeGalleryKey(url) {
+            try {
+                var raw = decodeURIComponent(String(url || ''));
+                var base = raw.split('?')[0].split('#')[0].split('/').pop() || raw;
+                // Achievements uploads are like: 1775..._uuid_originalName.jpg
+                if (base.indexOf('_') !== -1) {
+                    base = base.slice(base.lastIndexOf('_') + 1);
+                }
+                return base.toLowerCase();
+            } catch (_) {
+                return String(url || '').toLowerCase();
+            }
+        }
+
+        function dedupeGalleryImages(arr) {
+            var out = [];
+            var seen = new Set();
+            (arr || []).forEach(function (u) {
+                var key = normalizeGalleryKey(u);
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    out.push(u);
+                }
+            });
+            return out;
+        }
+
+        function highlightActiveCategory(category) {
+            var tabs = document.getElementById('categoryTabs');
+            if (!tabs) return;
+            Array.from(tabs.querySelectorAll('button')).forEach(function (btn) {
+                btn.classList.toggle('active', String(btn.getAttribute('data-category')) === String(category));
+            });
+        }
+
+        async function selectCategory(evt, category) {
+            if (evt && evt.preventDefault) evt.preventDefault();
+            currentCategory = category;
+            highlightActiveCategory(category);
+            
+            if (category === 'all') {
+                galleryImages = [...defaultGalleryImages];
+                loadGallery();
+            } else {
+                await loadCategoryImages(category);
+                loadGallery();
+            }
+        }
 
         async function loadUploadedMedia() {
             try {
@@ -546,9 +663,16 @@
                             description: item.description || ''
                         });
                     } else {
-                        galleryImages.unshift(item.url);
+                        // Deduplicate by filename (e.g. k9.jpg) so uploaded copies don't repeat
+                        var incomingKey = normalizeGalleryKey(item.url);
+                        var already = galleryImages.some(function (u) {
+                            return normalizeGalleryKey(u) === incomingKey;
+                        });
+                        if (!already) galleryImages.unshift(item.url);
                     }
                 });
+
+                galleryImages = dedupeGalleryImages(galleryImages);
             } catch (e) {
                 console.error('Failed to load uploaded achievements media', e);
             }
@@ -556,10 +680,20 @@
 
         // Initialize Gallery
         document.addEventListener('DOMContentLoaded', function() {
-            loadUploadedMedia().finally(function () {
-                loadGallery();
-                loadVideos();
-            });
+            Promise.resolve()
+                .then(function () { 
+                    if (currentCategory === 'all') {
+                        galleryImages = dedupeGalleryImages([...defaultGalleryImages]);
+                    } else {
+                        return loadCategoryImages(currentCategory);
+                    }
+                })
+                .then(function () { return loadUploadedMedia(); })
+                .finally(function () {
+                    highlightActiveCategory(currentCategory);
+                    loadGallery();
+                    loadVideos();
+                });
         });
 
         // Load Gallery Images
@@ -614,29 +748,33 @@
         }
 
         // Show Gallery
-        function showGallery() {
+        function showGallery(evt) {
             currentView = 'gallery';
             document.getElementById('galleryGrid').style.display = 'grid';
             document.getElementById('videoGrid').style.display = 'none';
+            var tabs = document.getElementById('categoryTabs');
+            if (tabs) tabs.style.display = 'flex';
             
             // Update toggle buttons
             document.querySelectorAll('.gallery-toggle button').forEach(btn => {
                 btn.classList.remove('active');
             });
-            event.target.classList.add('active');
+            if (evt && evt.target) evt.target.classList.add('active');
         }
 
         // Show Videos
-        function showVideos() {
+        function showVideos(evt) {
             currentView = 'videos';
             document.getElementById('galleryGrid').style.display = 'none';
             document.getElementById('videoGrid').style.display = 'grid';
+            var tabs = document.getElementById('categoryTabs');
+            if (tabs) tabs.style.display = 'none';
             
             // Update toggle buttons
             document.querySelectorAll('.gallery-toggle button').forEach(btn => {
                 btn.classList.remove('active');
             });
-            event.target.classList.add('active');
+            if (evt && evt.target) evt.target.classList.add('active');
         }
 
         // Slideshow Functions
