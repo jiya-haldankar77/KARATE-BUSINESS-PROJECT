@@ -3932,8 +3932,13 @@
                 var method = id ? 'PUT' : 'POST';
                 var url = id ? '/api/instructors/' + id : '/api/instructors';
                 
+                var token = localStorage.getItem('authToken');
+                var headers = {};
+                if (token) headers['Authorization'] = 'Bearer ' + token;
+                
                 fetch(url, {
                     method: method,
+                    headers: headers,
                     body: formData
                 })
                 .then(function(response) {
