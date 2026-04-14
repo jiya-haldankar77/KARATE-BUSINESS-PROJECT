@@ -2219,7 +2219,7 @@ app.post('/api/login', async (req, res) => {
     if (role === 'admin') {
       // MongoDB Admin login
       const admin = await Admin.findOne({ email: normEmail });
-      
+
       if (!admin) {
         // Create default admin if doesn't exist
         if (normEmail === 'karatesubhash455@gmail.com' && password === 'karate@123') {
@@ -2229,7 +2229,7 @@ app.post('/api/login', async (req, res) => {
             password: 'karate@123'
           });
           await newAdmin.save();
-          
+
           const token = jwt.sign(
             { email, role: 'admin', name: 'Admin' },
             JWT_SECRET,
@@ -2244,7 +2244,28 @@ app.post('/api/login', async (req, res) => {
         }
         return res.status(401).json({ message: 'Invalid admin credentials' });
       }
-      
+
+      // Check if admin password is empty/invalid and recreate if default credentials used
+      if (!admin.password || admin.password === '') {
+        if (normEmail === 'karatesubhash455@gmail.com' && password === 'karate@123') {
+          admin.password = 'karate@123';
+          await admin.save();
+
+          const token = jwt.sign(
+            { email, role: 'admin', name: admin.name },
+            JWT_SECRET,
+            { expiresIn: '24h' }
+          );
+          return res.json({
+            success: true,
+            token,
+            user: { email, role: 'admin', name: admin.name },
+            message: 'Admin login successful'
+          });
+        }
+        return res.status(401).json({ message: 'Invalid admin credentials' });
+      }
+
       const isMatch = await admin.comparePassword(password);
       if (!isMatch) {
         return res.status(401).json({ message: 'Invalid admin credentials' });

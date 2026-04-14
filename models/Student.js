@@ -24,6 +24,7 @@ StudentSchema.pre('save', async function(next) {
 });
 
 StudentSchema.methods.comparePassword = async function(candidatePassword) {
+  if (!this.password || !candidatePassword) return false;
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
