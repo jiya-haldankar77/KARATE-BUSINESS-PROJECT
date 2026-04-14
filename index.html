@@ -4140,8 +4140,17 @@
             };
 
             function generateAdmissionPDF(data) {
-                const { jsPDF } = window.jspdf;
-                const doc = new jsPDF();
+                try {
+                    if (!data || !data.id) {
+                        alert('Admission record not found');
+                        return;
+                    }
+                    if (!window.jspdf || !window.jspdf.jsPDF) {
+                        alert('PDF library failed to load. Please check your internet connection and refresh the page.');
+                        return;
+                    }
+                    const { jsPDF } = window.jspdf;
+                    const doc = new jsPDF();
                 
                 // Set up colors
                 const primaryColor = [212, 175, 55]; // #d4af37
@@ -4342,6 +4351,10 @@
                     
                     // Save the PDF
                     doc.save('admission_' + data.id + '.pdf');
+                }
+            } catch (e) {
+                    console.error('generateAdmissionPDF error:', e);
+                    alert('Failed to generate PDF. Please try again.');
                 }
             }
 

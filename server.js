@@ -1471,8 +1471,8 @@ app.delete('/api/batches/:id', verifyToken, requireAdmin, async (req, res) => {
 // -------- Admissions --------
 app.get('/api/admissions', async (req, res) => {
   try {
-    const admissions = await Admission.find({}).sort({ created_at: -1 }).lean();
-    res.json(admissions);
+    const admissions = await Admission.find({}).sort({ created_at: -1 });
+    res.json(admissions.map(function (a) { return a.toJSON(); }));
   } catch (err) {
     console.error('GET /api/admissions error', err);
     res.status(500).json({ message: 'Error fetching admissions' });
