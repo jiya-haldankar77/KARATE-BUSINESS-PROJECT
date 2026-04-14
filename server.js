@@ -36,15 +36,27 @@ const FeesPayment = require('./models/FeesPayment');
 
 // Connect to MongoDB
 const connectDB = async () => {
+  const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/karate';
   try {
-    const mongoURI = process.env.MONGO_URI || 'mongodb://localhost:27017/karate';
-    await mongoose.connect(mongoURI);
+    await mongoose.connect(mongoURI, {
+      serverSelectionTimeoutMS: 10000
+    });
     console.log('MongoDB Connected: ' + mongoURI);
+    return true;
   } catch (err) {
     console.error('MongoDB Connection Error:', err);
-    process.exit(1);
+    console.error('MongoDB is not reachable. The server will still start, but DB-backed features may fail until connectivity is fixed.');
+    return false;
   }
 };
+
+mongoose.connection.on('error', (err) => {
+  console.error('MongoDB runtime error:', err);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.error('MongoDB disconnected');
+});
 
 const app = express();
 app.set('trust proxy', 1);
