@@ -356,6 +356,47 @@ app.get('/api/achievements/media', async (req, res) => {
   }
 });
 
+// Public: list gallery images by category (filesystem)
+app.get('/api/gallery/:category', async (req, res) => {
+  try {
+    const category = String(req.params.category || '').trim().toLowerCase();
+    const allowed = {
+      seminar: 'seminar',
+      tournaments: 'tournament',
+      tournament: 'tournament',
+      activities: 'activities',
+      more: 'more'
+    };
+    const folder = allowed[category];
+    if (!folder) {
+      return res.status(400).json({ message: 'Invalid category' });
+    }
+
+    let dirPath = path.join(__dirname, 'gallery', folder);
+    if (!fs.existsSync(dirPath)) {
+      const spaced = path.join(__dirname, 'gallery', folder + ' ');
+      if (fs.existsSync(spaced)) {
+        dirPath = spaced;
+      }
+    }
+
+    const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+    const files = entries
+      .filter((e) => e.isFile())
+      .map((e) => e.name)
+      .filter((name) => /\.(png|jpe?g|webp|gif)$/i.test(name))
+      .sort((a, b) => a.localeCompare(b));
+
+    const publicFolder = path.basename(dirPath);
+    const folderEncoded = encodeURIComponent(publicFolder);
+    const urls = files.map((name) => `/gallery/${folderEncoded}/${encodeURIComponent(name)}`);
+    res.json({ category: publicFolder, count: urls.length, urls });
+  } catch (e) {
+    console.error('GET /api/gallery/:category error', e);
+    res.status(500).json({ message: 'Error reading gallery category' });
+  }
+});
+
 // Admin: upload photo/video
 app.post('/api/achievements/media', verifyToken, (req, res) => {
   if (!req.user || req.user.role !== 'admin') {
@@ -2626,5 +2667,5 @@ const startServer = async () => {
 
 startServer().catch(err => {
   console.error('Failed to start server:', err);
-  process.exit(1);
+  // Do not exit: keep process alive on Render to allow health checks & static pages.
 });
